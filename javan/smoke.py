@@ -112,12 +112,13 @@ def run_accounting_probe(mode, folder):
     view.resize(1100, 720)
     view.show()
     submitted = False
+    receipt_submitted = False
     last_result = None
     poll = QTimer()
     poll.setInterval(250)
 
     def inspect(result):
-        nonlocal submitted, last_result
+        nonlocal submitted, receipt_submitted, last_result
         # PySide's conversion of JS objects is not portable across Qt versions.
         # Return a JSON string from Chromium and decode it explicitly.
         if result != last_result:
@@ -133,7 +134,7 @@ def run_accounting_probe(mode, folder):
         if ready == 'readonly':
             app.exit(6)
             return
-        if ready != 'ready':
+        if ready != 'ready' or result.get('inert'):
             return
         if mode == 'write' and not submitted:
             if count != 1:
@@ -150,6 +151,9 @@ def run_accounting_probe(mode, folder):
   const customer = document.querySelector('#inv-customer');
   customer.value = 'CI-persistence-probe';
   customer.dispatchEvent(new Event('input', {bubbles: true}));
+  const payment = document.querySelector('#inv-payment-status');
+  payment.value = 'نسیه';
+  payment.dispatchEvent(new Event('change', {bubbles: true}));
   document.querySelector('#btn-save-invoice').click();
   return 'invoice click dispatched';
 })()
@@ -166,6 +170,56 @@ def run_accounting_probe(mode, folder):
             if not list((folder / 'accounting-data' / 'backups').glob('legacy-*.json')):
                 app.exit(11)
                 return
+            invoice = by_name['CI-persistence-probe']
+            linked = [d for d in data['debts'] if d.get('invoiceId') == invoice['id']]
+            if invoice.get('paymentStatus') != 'نسیه' or len(linked) != 1:
+                log('credit invoice linkage failed')
+                app.exit(13)
+                return
+            debt = linked[0]
+            if debt.get('amount') != 12345 or debt.get('paid') is not False:
+                log('invalid linked debt principal/status')
+                app.exit(14)
+                return
+            payments = debt.get('payments', [])
+            if mode == 'write' and not receipt_submitted:
+                if payments:
+                    app.exit(15)
+                    return
+                receipt_submitted = True
+                log('submitting synthetic partial receipt via actual debt UI')
+                view.page().runJavaScript("""
+(() => {
+  document.querySelector('#btn-open-debts').click();
+  const btn = document.querySelector('[data-debt-act="partial"]');
+  if (!btn) return 'partial-payment button missing';
+  // Supply a synthetic value to the input prompt only in this CI probe.
+  const original = window.prompt;
+  try {
+    window.prompt = () => '2345';
+    btn.click();
+  } finally {
+    window.prompt = original;
+  }
+  return 'partial receipt click dispatched';
+})()
+""", lambda result: log('receipt callback: ' + repr(result)))
+                return
+            if mode == 'write' and not payments:
+                return
+            if len(payments) != 1 or payments[0].get('amount') != 2345:
+                log('incorrect persisted partial receipt')
+                app.exit(16)
+                return
+            if debt['amount'] - sum(p['amount'] for p in payments) != 10000:
+                log('incorrect remaining balance')
+                app.exit(17)
+                return
+            if result.get('debts') != 1:
+                log('incorrect debt UI badge')
+                app.exit(18)
+                return
+            log('credit invoice, partial receipt and remaining balance verified')
         except Exception:
             log(traceback.format_exc())
             app.exit(9)
@@ -198,6 +252,7 @@ def run_accounting_probe(mode, folder):
     poll.timeout.connect(lambda: view.page().runJavaScript(
         """JSON.stringify({ready:document.documentElement.dataset.ledgerReady || '',
         count:Number(document.querySelector('#header-history-count')?.textContent),
+        debts:Number(document.querySelector('#header-debts-count')?.textContent),
         banner:document.querySelector('#storage-banner')?.textContent || '',
         toast:document.querySelector('#toast-container')?.textContent || '',
         channel:typeof QWebChannel, transport:typeof qt,
