@@ -1,6 +1,7 @@
 """Launch a separate native WebView2 workspace; the Qt GUI stays responsive."""
 import json
 import shutil
+from threading import Thread
 from pathlib import Path
 from uuid import uuid4
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class EdgeHost(QObject):
     status = Signal(str)
+    event_received = Signal(str)
 
     def __init__(self, folder, parent=None):
         super().__init__(parent)
@@ -27,7 +29,7 @@ class EdgeHost(QObject):
         if self.folder.is_dir():
             for p in self.folder.iterdir():
                 if p.is_dir() and not p.is_symlink() and len(p.name) == 32 and all(c in '0123456789abcdef' for c in p.name):
-                    shutil.rmtree(p, ignore_errors=True)
+                    Thread(target=shutil.rmtree, args=(p,), kwargs={'ignore_errors':True}, daemon=True).start()
 
     def available(self):
         return self.exe.is_file()
@@ -95,6 +97,8 @@ class EdgeHost(QObject):
                 self.status.emit('زبانه موجود بدون بارگذاری مجدد فعال شد.')
             elif event.get('kind') == 'error':
                 self.status.emit('خطا در موتور Edge؛ Runtime و نصب برنامه را بررسی کنید.')
+            if event.get('kind') in ('ready','loaded','reused','error'):
+                self.event_received.emit(event['kind'])
 
     def failed(self, proc, error):
         if self.process is proc:
@@ -110,9 +114,10 @@ class EdgeHost(QObject):
         self.closing = False
         self.pending.clear()
         if self.session is not None:
-            shutil.rmtree(self.session, ignore_errors=True)
+            Thread(target=shutil.rmtree, args=(self.session,), kwargs={'ignore_errors':True}, daemon=True).start()
             self.session = None
         proc.deleteLater()
+        self.event_received.emit('closed')
 
     def close_session(self):
         if not self.active():

@@ -31,6 +31,7 @@ sealed class EdgeWindow : Form
     readonly Button back = new() { Text = "←" }, forward = new() { Text = "→" }, reload = new() { Text = "↻" };
     readonly Dictionary<string, (string url, TabPage tab)> links = new();
     readonly Dictionary<TabPage, WebView2> views = new();
+    readonly HashSet<WebView2> loading = new();
     readonly StreamWriter? output;
     CoreWebView2Environment? environment;
     bool ready, stopping;
@@ -53,23 +54,25 @@ sealed class EdgeWindow : Form
         toolbar.Controls.Add(back,0,0); toolbar.Controls.Add(forward,1,0); toolbar.Controls.Add(reload,2,0);
         toolbar.Controls.Add(address,3,0);
         toolbar.Controls.Add(ActionButton("برو", () => Go()),4,0);
-        toolbar.Controls.Add(ActionButton("＋ زبانه", async () => await OpenAsync("", "https://www.bing.com/", "زبانه جدید")),5,0);
+        toolbar.Controls.Add(ActionButton("＋ زبانه", () => NewBlank()),5,0);
         toolbar.Controls.Add(ActionButton("بستن تب", () => CloseTab()),6,0);
         toolbar.Controls.Add(ActionButton("چاپ", () => Current?.CoreWebView2?.ShowPrintUI()),7,0);
         toolbar.Controls.Add(ActionButton("ذخیره PDF", async () => await SavePdf()),8,0);
         back.Click += (_,_) => { if(Current?.CanGoBack==true) Current.GoBack(); };
         forward.Click += (_,_) => { if(Current?.CanGoForward==true) Current.GoForward(); };
-        reload.Click += (_,_) => Current?.Reload();
+        reload.Click += (_,_) => { if(Current is WebView2 v) { if(loading.Contains(v)) v.CoreWebView2?.Stop(); else v.Reload(); } };
         address.KeyDown += (_,e) => { if(e.KeyCode==Keys.Enter) { e.SuppressKeyPress=true; Go(); } };
-        var footer = new TableLayoutPanel { Dock=DockStyle.Bottom, Height=34, ColumnCount=4, BackColor=Color.White };
+        var footer = new TableLayoutPanel { Dock=DockStyle.Bottom, Height=34, ColumnCount=5, BackColor=Color.White };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,80));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,80));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,140));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,100));
         footer.Controls.Add(status,0,0);
         footer.Controls.Add(ActionButton("− بزرگ‌نما",()=>Zoom(-.1)),1,0);
         footer.Controls.Add(ActionButton("+ بزرگ‌نما",()=>Zoom(.1)),2,0);
         footer.Controls.Add(ActionButton("Edge اصلی",()=>OpenFullEdge()),3,0);
+        footer.Controls.Add(ActionButton("دانلودها",()=>Current?.CoreWebView2?.OpenDefaultDownloadDialog()),4,0);
         Controls.Add(tabs); Controls.Add(footer); Controls.Add(toolbar);
         tabs.SelectedIndexChanged += (_,_) => Sync();
         if (!smoke)
@@ -168,11 +171,13 @@ sealed class EdgeWindow : Form
             {
                 if(!SafeUrl(e.Uri) && e.Uri!="about:blank" && !e.Uri.StartsWith("blob:https://",StringComparison.OrdinalIgnoreCase))
                 { e.Cancel=true; status.Text="نشانی خارج از HTTP(S) مسدود شد."; }
-                else status.Text="در حال بارگذاری…";
+                else { loading.Add(view); if(tabs.SelectedTab==tab) { status.Text="در حال بارگذاری…"; Sync(); } }
             };
             core.NavigationCompleted += (_,e) =>
             {
+                loading.Remove(view);
                 if(tabs.SelectedTab==tab) { Sync(); status.Text=e.IsSuccess?"آماده":("بارگذاری ناموفق: "+e.WebErrorStatus); }
+                if(e.IsSuccess) Emit("loaded");
             };
             core.SourceChanged += (_,_)=>{ if(tabs.SelectedTab==tab) Sync(); };
             core.HistoryChanged += (_,_)=>{ if(tabs.SelectedTab==tab) Sync(); };
@@ -182,6 +187,7 @@ sealed class EdgeWindow : Form
                 if(!string.IsNullOrWhiteSpace(t)) tab.Text=t.Length>50?t[..50]:t;
             };
             core.ServerCertificateErrorDetected += (_,e)=>e.Action=CoreWebView2ServerCertificateErrorAction.Cancel;
+            core.LaunchingExternalUriScheme += (_,e)=>e.Cancel=true;
             core.PermissionRequested += (_,e) =>
             {
                 e.SavesInProfile=false;
@@ -242,15 +248,22 @@ sealed class EdgeWindow : Form
         if(v?.CoreWebView2==null) return;
         if(!address.Focused) address.Text=v.Source?.ToString()??"";
         back.Enabled=v.CanGoBack; forward.Enabled=v.CanGoForward;
+        reload.Text=loading.Contains(v)?"×":"↻";
         if(v.Source?.Scheme=="http") status.Text="هشدار: اتصال HTTP رمزنگاری نشده";
     }
-    void Go()
+    async void NewBlank()
+    {
+        if(!ready || tabs.TabCount>=24) return;
+        try { var v=await AddTab("زبانه جدید"); v.CoreWebView2.Navigate("about:blank"); }
+        catch { status.Text="ایجاد زبانه جدید ناموفق بود."; }
+    }
+    async void Go()
     {
         var text=address.Text.Trim();
         if(!text.Contains("://")) text="https://"+text;
         if(!SafeUrl(text)) { status.Text="نشانی معتبر HTTP یا HTTPS وارد کنید."; return; }
         var v=Current;
-        if(v?.CoreWebView2==null) { _=OpenAsync("",text,"زبانه جدید"); return; }
+        if(v?.CoreWebView2==null) { try { await OpenAsync("",text,"زبانه جدید"); } catch { status.Text="باز کردن صفحه ناموفق بود."; } return; }
         if(Uri.TryCreate(text,UriKind.Absolute,out var requested) && requested==v.Source) return;
         // The tab is no longer identified with its original catalog entry.
         foreach(var k in links.Where(x=>x.Value.tab==tabs.SelectedTab).Select(x=>x.Key).ToArray()) links.Remove(k);
@@ -262,7 +275,8 @@ sealed class EdgeWindow : Form
         var tab=target??tabs.SelectedTab;
         if(tab==null) return;
         foreach(var k in links.Where(x=>x.Value.tab==tab).Select(x=>x.Key).ToArray()) links.Remove(k);
-        views.Remove(tab); tabs.TabPages.Remove(tab); tab.Dispose();
+        if(views.Remove(tab,out var view)) loading.Remove(view);
+        tabs.TabPages.Remove(tab); tab.Dispose();
     }
     async Task SavePdf()
     {

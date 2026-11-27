@@ -29,6 +29,43 @@ def run_smoke():
     if window.economy_timer.isActive():
         raise AssertionError('Economy timer did not stop')
     completed = False
+    edge_server = None
+
+    def verify_edge_host():
+        nonlocal edge_server
+        if not window.edge.available():
+            app.exit(0)
+            return
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                data = b'<html><title>Javan packaged Edge test</title>ready</html>'
+                self.send_response(200)
+                self.send_header('Content-Type','text/html')
+                self.send_header('Content-Length',str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            def log_message(self, *_):
+                pass
+        edge_server = ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        Thread(target=edge_server.serve_forever,daemon=True).start()
+        url = 'http://127.0.0.1:%d/' % edge_server.server_port
+        stage = [0]
+        def received(event):
+            if event == 'error':
+                app.exit(20)
+            elif event == 'loaded' and stage[0] == 0:
+                stage[0] = 1
+                window.edge.open('ci-edge-tab',url,'CI Edge')
+            elif event == 'reused' and stage[0] == 1:
+                stage[0] = 2
+                window.edge.close_session()
+            elif event == 'closed':
+                app.exit(0 if stage[0] == 2 else 21)
+        window.edge.event_received.connect(received)
+        if not window.edge.open('ci-edge-tab',url,'CI Edge'):
+            app.exit(22)
 
     def result(html):
         nonlocal completed
@@ -59,7 +96,7 @@ def run_smoke():
             window.close_tab(window.tabs.indexOf(second))
             if window.tabs.count() != 1:
                 raise AssertionError('Close tab failed')
-            app.exit(0)
+            verify_edge_host()
         except Exception:
             import sys
             sys.excepthook(*sys.exc_info())
@@ -75,6 +112,9 @@ def run_smoke():
     QTimer.singleShot(60000, lambda: app.exit(4))
     code = app.exec()
     window.dispose_views()
+    if edge_server is not None:
+        edge_server.shutdown()
+        edge_server.server_close()
     return code
 
 
