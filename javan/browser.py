@@ -3,11 +3,13 @@ from pathlib import Path
 from hashlib import sha256
 import json
 from .storage import atomic_write
+from .diagnostics import LOGGER
 from PySide6.QtCore import QObject
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineUrlRequestInterceptor
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication
+from .manager import ask
 
 HOME_HTML = '''<!doctype html>
 <html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -26,6 +28,13 @@ article{background:#fff;border:1px solid #e0e7ef;border-radius:14px;padding:18px
 
 class BrowserPage(QWebEnginePage):
     navigation_blocked = Signal(str)
+
+    def javaScriptConsoleMessage(self, level, message, line_number, source_id):
+        # Never write arbitrary web content or URL into diagnostic logs.
+        if level == QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel:
+            LOGGER.warning('WebEngine script error at line %d', line_number)
+
+
 
     def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
         if url.scheme().lower() not in ('http', 'https', 'about', 'data', 'blob'):
@@ -96,6 +105,7 @@ class BrowserSessions(QObject):
         profile = QWebEngineProfile(self)
         profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
         profile.setHttpCacheMaximumSize(32 * 1024 * 1024)
+        profile.setPermissionPersistencePolicy(QWebEngineProfile.PersistentPermissionsPolicy.AskEveryTime)
         profile.downloadRequested.connect(self.download_handler)
         return profile
 
@@ -184,6 +194,33 @@ class BrowserView(QWebEngineView):
         settings.setAttribute(A.PdfViewerEnabled, True)
         page.navigation_blocked.connect(lambda scheme: self.status_message.emit('دسترسی به این آدرس مسدود است: ' + scheme))
         page.newWindowRequested.connect(lambda request: self.popup_requested.emit(self, request))
+        page.renderProcessTerminated.connect(self._renderer_stopped)
+        page.certificateError.connect(self._reject_certificate)
+        page.permissionRequested.connect(self._permission_requested)
+
+    def _reject_certificate(self, error):
+        error.rejectCertificate()
+        self.status_message.emit('گواهی امنیتی سایت معتبر نیست؛ دسترسی مسدود شد.')
+
+    def _renderer_stopped(self, status, code):
+        LOGGER.warning('WebEngine renderer stopped; status=%s code=%d', status.name, code)
+        self.status_message.emit('پردازش مرورگر متوقف شد؛ در صورت نیاز صفحه را دوباره بارگذاری کنید.')
+
+    def _permission_requested(self, permission):
+        from PySide6.QtWebEngineCore import QWebEnginePermission
+        allowed = {
+            QWebEnginePermission.PermissionType.MediaAudioCapture: 'میکروفون',
+            QWebEnginePermission.PermissionType.MediaVideoCapture: 'دوربین',
+            QWebEnginePermission.PermissionType.MediaAudioVideoCapture: 'دوربین و میکروفون',
+        }
+        origin = permission.origin()
+        kind = allowed.get(permission.permissionType())
+        if self.root is None and kind and origin.scheme() == 'https' and origin.host():
+            if ask(self, 'اجازه دسترسی به ' + kind + ' برای ' + origin.host() + ' در این نشست؟'):
+                permission.grant()
+                return
+        permission.deny()
+
 
     def navigate(self, address):
         url = QUrl(address)

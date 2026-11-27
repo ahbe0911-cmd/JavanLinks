@@ -4,8 +4,8 @@ from PySide6.QtCore import Qt, QStandardPaths, Signal, QTimer
 from PySide6.QtWebEngineCore import QWebEngineDownloadRequest
 from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QAbstractItemView, QHeaderView)
-from .browser_utils import safe_filename
-from .manager import warn
+from .browser_utils import safe_filename, risky_download
+from .manager import warn, ask
 
 D = QWebEngineDownloadRequest.DownloadState
 
@@ -54,6 +54,9 @@ class DownloadManager(QDialog):
             request.cancel()
             return
         path = Path(name)
+        if (risky_download(request.suggestedFileName()) or risky_download(path.name)) and not ask(self.parentWidget(), 'این نوع فایل ممکن است برنامه یا دستور اجرایی باشد. فقط از منبع مورد اعتماد دانلود کنید. ادامه؟'):
+            request.cancel()
+            return
         if any(not rec['finished'] and rec['path'] == path for rec in self.records):
             request.cancel()
             warn(self.parentWidget(), 'دانلود دیگری در همین مسیر در حال انجام است.')
@@ -101,7 +104,11 @@ class DownloadManager(QDialog):
         self.table.setRowCount(len(self.records))
         for i, rec in enumerate(self.records):
             for j, value in enumerate((rec['path'].name, rec['progress'], rec['status'], str(rec['path']))):
-                self.table.setItem(i, j, QTableWidgetItem(value))
+                item = self.table.item(i, j)
+                if item is None:
+                    self.table.setItem(i, j, QTableWidgetItem(value))
+                elif item.text() != value:
+                    item.setText(value)
         if 0 <= row < len(self.records):
             self.table.selectRow(row)
         self.summary.setText(f'{len(self.records)} دانلود | {self.active_count()} فعال')

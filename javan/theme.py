@@ -84,3 +84,15 @@ QPushButton#accountingButton:hover { background: #047857; }
 QPushButton#accountingButton:checked { background: #065f46; border: 1px solid #34d399; }
 QPushButton#accountingButton:focus { border: 2px solid #6ee7b7; }
 '''
+
+
+STYLE += '''
+QFrame#topbar { border-radius: 10px; }
+QPushButton#browserAction { min-height: 24px; padding: 5px 10px; font-weight: 500; }
+QPushButton#sessionButton { background: #fff1f2; color: #9f1239; border: 1px solid #fecdd3; border-radius: 8px; padding: 7px 10px; font-weight: 600; }
+QPushButton#sessionButton:hover { background: #ffe4e6; }
+QPushButton#economyButton { background: #f1f5f9; color: #475569; border: 1px solid #dce4ed; border-radius: 8px; padding: 7px 10px; }
+QPushButton#economyButton:checked { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+QTabBar::tab:selected { border-bottom: 3px solid #0d9488; }
+QPushButton#browserAction:focus, QPushButton#sessionButton:focus, QPushButton#economyButton:focus { border: 1px solid #0d9488; }
+'''

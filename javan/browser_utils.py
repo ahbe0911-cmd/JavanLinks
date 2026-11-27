@@ -22,6 +22,13 @@ def safe_filename(name: str) -> str:
     return name or 'download'
 
 
+RISKY_SUFFIXES = frozenset({'.exe','.msi','.msp','.bat','.cmd','.com','.scr','.js','.jse','.vbs','.vbe','.ps1','.lnk','.reg','.hta','.wsf','.cpl','.dll','.jar'})
+
+
+def risky_download(name: str) -> bool:
+    return Path(name.strip(' .')).suffix.casefold() in RISKY_SUFFIXES
+
+
 def web_address(value: str) -> str:
     value = value.strip()
     if not value or any(c.isspace() or ord(c) < 32 for c in value) or '\\' in value:

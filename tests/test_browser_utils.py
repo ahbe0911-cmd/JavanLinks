@@ -23,3 +23,15 @@ class BrowserUtilsTests(unittest.TestCase):
 
     def test_origin(self):
         self.assertEqual(origin_label('https://example.com/path?token=secret'), 'https://example.com')
+
+
+class RiskyDownloadTests(unittest.TestCase):
+    def test_executable_extensions(self):
+        from javan.browser_utils import risky_download
+        for name in ('report.pdf.exe', 'file.JS', 'shortcut.lnk', 'installer.msi', 'file.cmd. '):
+            self.assertTrue(risky_download(name), name)
+
+    def test_ordinary_documents(self):
+        from javan.browser_utils import risky_download
+        for name in ('report.pdf', 'photo.jpg', 'backup.json', 'list.csv', 'archive.zip'):
+            self.assertFalse(risky_download(name), name)

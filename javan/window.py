@@ -2,7 +2,8 @@ from pathlib import Path
 from time import time_ns
 import sqlite3
 from zipfile import BadZipFile
-from PySide6.QtCore import Qt, QStandardPaths, QCoreApplication, QEvent
+from PySide6.QtCore import Qt, QStandardPaths, QCoreApplication, QEvent, QTimer
+from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtGui import QKeySequence, QShortcut, QPageLayout, QPageSize
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow, QLineEdit,
@@ -63,7 +64,11 @@ class MainWindow(QMainWindow):
         self.accounting_button.setObjectName('accountingButton')
         self.accounting_button.setCheckable(True)
         self.session_button = self.button(row, 'پایان جلسه', 'پاک کردن نشست اینترنتی مشتری؛ حسابداری محفوظ می‌ماند', self.end_customer_session)
+        self.session_button.setObjectName('sessionButton')
         self.font_button = self.button(row, 'فونت‌ها', 'وارد کردن فونت‌های حسابداری از فایل ZIP یا TTF', self.choose_accounting_fonts)
+        self.economy_button = self.button(row, 'سبک', 'کاهش فعالیت تب‌های غیرفعال با رعایت پیشنهاد موتور مرورگر', self.toggle_economy)
+        self.economy_button.setObjectName('economyButton')
+        self.economy_button.setCheckable(True)
         self.page_title = label('صفحه اصلی', 'pageTitle')
         self.page_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self.page_title, 1)
@@ -112,6 +117,10 @@ class MainWindow(QMainWindow):
         self.tabs.setUsesScrollButtons(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.sync)
+        self.tabs.currentChanged.connect(self.resume_current)
+        self.economy_timer = QTimer(self)
+        self.economy_timer.setInterval(30000)
+        self.economy_timer.timeout.connect(self.sleep_background_tabs)
         layout.addWidget(self.tabs, 1)
         status_card = QFrame()
         status_card.setObjectName('statusCard')
@@ -174,6 +183,36 @@ class MainWindow(QMainWindow):
             self.accounting_button.setChecked(False)
             warn(self, 'باز کردن حسابداری ناموفق بود.\n' + str(exc))
 
+    def toggle_economy(self, enabled):
+        if enabled:
+            self.economy_timer.start()
+            self.status.setText('حالت سبک فعال شد؛ فقط زبانه‌های اینترنتی غیرفعال و امن برای توقف، موقتاً متوقف می‌شوند.')
+        else:
+            self.economy_timer.stop()
+            for i in range(self.tabs.count()):
+                self.tabs.widget(i).page().setLifecycleState(QWebEnginePage.LifecycleState.Active)
+            self.status.setText('حالت سبک غیرفعال شد.')
+
+    def resume_current(self, *_):
+        view = self.current()
+        if view is not None:
+            view.page().setLifecycleState(QWebEnginePage.LifecycleState.Active)
+
+    def sleep_background_tabs(self):
+        # No discard/reload: preserve form state. Never freeze local tools,
+        # accounting, foreground tabs, active downloads or print jobs.
+        if self.downloads.active_count() or self.print_jobs:
+            return
+        active = self.current()
+        state = QWebEnginePage.LifecycleState
+        for i in range(self.tabs.count()):
+            view = self.tabs.widget(i)
+            if view is active or view.root is not None or view.loading:
+                continue
+            page = view.page()
+            if page.lifecycleState() == state.Active and page.recommendedState() in (state.Frozen, state.Discarded):
+                page.setLifecycleState(state.Frozen)
+
     def end_customer_session(self):
         if self.print_jobs or self.downloads.active_count():
             warn(self, 'ابتدا چاپ و دانلودهای فعال را به پایان برسانید.')
@@ -194,6 +233,7 @@ class MainWindow(QMainWindow):
         self.status.setText('نشست اینترنتی جدید آماده است؛ فایل‌های قبلی را از مسیر دانلود بررسی کنید.')
 
     def dispose_views(self):
+        self.economy_timer.stop()
         for i in range(self.tabs.count() - 1, -1, -1):
             v = self.tabs.widget(i)
             v.stop()
@@ -443,11 +483,11 @@ class MainWindow(QMainWindow):
         # Always show the true origin separately; do not expose tokens in status.
         if v.root is not None:
             self.address.setText(url.toLocalFile())
-            self.origin.setText('HTML محلی')
+            self.origin.setText('حسابداری آفلاین · SQLite' if accounting else 'HTML محلی')
         else:
             if not self.address.hasFocus() or self.address.property('tabIndex') != self.tabs.currentIndex():
                 self.address.setText(url.toString() if url.scheme() in ('http', 'https') else '')
-            self.origin.setText(origin_label(url.toString()))
+            self.origin.setText(('⚠ اتصال ناامن  |  ' if url.scheme() == 'http' else '') + origin_label(url.toString()))
         self.address.setProperty('tabIndex', self.tabs.currentIndex())
 
     def print_page(self, view=None):

@@ -8,6 +8,7 @@ from .window import MainWindow
 from .manager import warn
 from .storage import CatalogStore
 from . import __version__
+from .diagnostics import configure_logging, LOGGER
 
 
 def run() -> int:
@@ -38,9 +39,14 @@ def run() -> int:
     except (OSError, ValueError, RecursionError) as exc:
         warn(None, 'فایل داده باز نشد و بازنویسی نشده است. فایل catalog.json را بررسی یا از نسخه پشتیبان بازیابی کنید.\n' + str(folder) + '\n' + str(exc))
         return 1
+    try:
+        configure_logging(folder)
+    except OSError:
+        warn(None, 'پوشه گزارش خطا قابل نوشتن نیست؛ برنامه بدون گزارش تشخیصی اجرا می‌شود.')
     window = MainWindow(store)
     window.showMaximized()
     code = app.exec()
     window.dispose_views()
     lock.unlock()
+    LOGGER.info('Application stopped with code %d', code)
     return code
