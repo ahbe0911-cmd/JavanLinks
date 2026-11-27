@@ -2247,6 +2247,7 @@
       }
       function lockStorage(message) {
         storageLocked = true;
+        document.documentElement.dataset.ledgerReady = 'readonly';
         showStorageBanner(message);
       }
       function snapshot() {
@@ -2396,7 +2397,8 @@
         }
       }
       async function persist(reason = 'save') {
-        if (saving || (storageLocked && !(reason === 'restore' && canRecover))) {
+        if (saving) { showToast('ثبت دیگری در حال انجام است.', 'error'); return false; }
+        if (storageLocked && !(reason === 'restore' && canRecover)) {
           if (committed) applySnapshot(committed);
           refreshSavedState();
           showToast('ثبت انجام نشد؛ حسابداری در حالت حفاظت از داده است.', 'error');
@@ -2416,7 +2418,9 @@
           }
           revision = answer.revision;
           committed = candidate;
+          applySnapshot(candidate);
           storageLocked = false;
+          document.documentElement.dataset.ledgerReady = 'ready';
           showStorageBanner(answer.warning);
           refreshSavedState();
           return true;
@@ -3469,7 +3473,8 @@
           const editingId = state.invoice.editingId;
 
           // جلوگیری از شماره فاکتور تکراری
-          const dup = state.invoices.find(i => String(i.invoiceNumber) === invNumber && i.id !== editingId);
+          const canonicalNumber = x => String(x).replace(/^0+(?=\d)/, '');
+          const dup = state.invoices.find(i => canonicalNumber(i.invoiceNumber) === canonicalNumber(invNumber) && i.id !== editingId);
           if (dup) {
             showToast(`شماره فاکتور #${invNumber} قبلاً ثبت شده است. شماره دیگری وارد کنید.`, 'error');
             document.getElementById('inv-number').focus();
@@ -3639,6 +3644,7 @@
           if (act === 'print') {
             executePrint(inv);
           } else if (act === 'load') {
+            if (state.invoice.items.length && !window.confirm('پیش‌نویس فعلی جایگزین شود؟')) return;
             state.invoice = {
               items: (inv.items || []).map(i => ({ ...i })),
               customerName: inv.customerName || '',
@@ -3713,6 +3719,7 @@
       async function init() {
         document.body.inert = true;
         try { await loadStorage(); } finally { document.body.inert = false; }
+        if (!committed) committed = snapshot();
         applyTheme(state.theme);
         renderLogos();
         document.getElementById('header-jalali-date').textContent = getFullJalaliHeaderLabel();

@@ -40,4 +40,7 @@ def run() -> int:
         return 1
     window = MainWindow(store)
     window.showMaximized()
-    return app.exec()
+    code = app.exec()
+    window.dispose_views()
+    lock.unlock()
+    return code

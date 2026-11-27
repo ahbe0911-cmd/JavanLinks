@@ -1,6 +1,8 @@
 """Shared web session and isolated local profiles for tabbed browsing."""
 from pathlib import Path
 from hashlib import sha256
+import json
+from .storage import atomic_write
 from PySide6.QtCore import QObject
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineUrlRequestInterceptor
@@ -38,6 +40,8 @@ class LocalPolicy(QWebEngineUrlRequestInterceptor):
         self.root = Path(root).resolve()
 
     def allows(self, url):
+        if url.toString() == 'qrc:///qtwebchannel/qwebchannel.js' and self.root.name == 'accounting':
+            return True
         if url.scheme().lower() in ('data', 'blob', 'about'):
             return True
         if url.isLocalFile() and not url.host():
@@ -56,9 +60,16 @@ class LocalPage(BrowserPage):
     def __init__(self, profile, policy, parent):
         super().__init__(profile, parent)
         self.policy = policy
+        self.accounting_path = None
 
     def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
-        allowed = self.policy.allows(url)
+        if self.accounting_path is not None:
+            try:
+                allowed = is_main_frame and url.isLocalFile() and not url.host() and Path(url.toLocalFile()).resolve() == self.accounting_path
+            except (OSError, ValueError, RuntimeError):
+                allowed = False
+        else:
+            allowed = self.policy.allows(url)
         if not allowed:
             self.navigation_blocked.emit(url.scheme())
         return allowed
@@ -70,15 +81,62 @@ class BrowserSessions(QObject):
         super().__init__(QApplication.instance())
         self.folder = Path(folder)
         self.download_handler = download_handler
-        self.web = QWebEngineProfile(self)
-        self.web.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
-        self.web.downloadRequested.connect(download_handler)
+        self.web = self._new_web_profile()
         self.local_profiles = {}
+
+    def _new_web_profile(self):
+        profile = QWebEngineProfile(self)
+        profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+        profile.setHttpCacheMaximumSize(32 * 1024 * 1024)
+        profile.downloadRequested.connect(self.download_handler)
+        return profile
+
+    def reset_web(self):
+        old = self.web
+        self.web = self._new_web_profile()
+        old.cookieStore().deleteAllCookies()
+        old.clearHttpCache()
+        old.deleteLater()
+
+    def _profile_key(self, root):
+        key = sha256(str(root).encode('utf-8')).hexdigest()[:32]
+        if root != (self.folder / 'accounting').resolve():
+            return key
+        # Preserve the exact legacy profile path whenever it already exists.
+        # A marker keeps the choice independent of a subsequent path change.
+        marker = self.folder / 'accounting-profile.json'
+        profiles = self.folder / 'local-profiles'
+        if marker.exists():
+            config = json.loads(marker.read_text(encoding='utf-8'))
+            selected = config.get('profile_key')
+            if not isinstance(selected, str) or not (selected == 'accounting-v1' or
+                (len(selected) == 32 and all(c in '0123456789abcdef' for c in selected))):
+                raise ValueError('تنظیمات پروفایل حسابداری خراب است.')
+            if not (profiles / selected / 'storage').is_dir() and not (self.folder / 'accounting-data' / 'ledger.db').exists():
+                raise ValueError('پروفایل قدیمی حسابداری یافت نشد؛ ابتدا داده را بازیابی کنید.')
+            return selected
+        if (profiles / key / 'storage').is_dir():
+            selected = key
+        elif (profiles / 'accounting-v1' / 'storage').is_dir():
+            selected = 'accounting-v1'
+        elif (self.folder / 'accounting-data' / 'ledger.db').exists():
+            selected = 'accounting-v1'
+        else:
+            # A moved legacy data directory may contain a differently hashed
+            # profile. Do not guess which of several profiles contains finances.
+            candidates = [p for p in profiles.glob('*') if p.is_dir() and (p / 'storage').is_dir()]
+            if candidates:
+                raise ValueError('پروفایل قدیمی با مسیر فعلی تطابق ندارد. برای جلوگیری از افتتاح دفتر خالی، ابتدا از نسخه قبلی پشتیبان حسابداری بگیرید یا مسیر را بازیابی کنید.')
+            selected = 'accounting-v1'
+        # Create the directory first so an interrupted first start is recoverable.
+        (profiles / selected / 'storage').mkdir(parents=True, exist_ok=True)
+        atomic_write(marker, json.dumps({'profile_key': selected}).encode('utf-8'))
+        return selected
 
     def local(self, root):
         root = Path(root).resolve()
         if root not in self.local_profiles:
-            key = sha256(str(root).encode('utf-8')).hexdigest()[:32]
+            key = self._profile_key(root)
             profile = QWebEngineProfile('JavanLocal-' + key, self)
             profile.setPersistentStoragePath(str(self.folder / 'local-profiles' / key / 'storage'))
             profile.setCachePath(str(self.folder / 'local-profiles' / key / 'cache'))
@@ -114,7 +172,7 @@ class BrowserView(QWebEngineView):
         settings.setAttribute(A.LocalContentCanAccessFileUrls, self.root is not None)
         settings.setAttribute(A.LocalStorageEnabled, True)
         settings.setAttribute(A.JavascriptCanOpenWindows, self.root is None)
-        settings.setAttribute(A.PluginsEnabled, True)
+        settings.setAttribute(A.PluginsEnabled, False)
         settings.setAttribute(A.PdfViewerEnabled, True)
         page.navigation_blocked.connect(lambda scheme: self.status_message.emit('دسترسی به این آدرس مسدود است: ' + scheme))
         page.newWindowRequested.connect(lambda request: self.popup_requested.emit(self, request))

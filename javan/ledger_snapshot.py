@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import math
+import re
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
@@ -54,7 +55,7 @@ def require(condition, msg):
 
 def valid_amount(value):
     # Legacy fractional amounts remain unchanged until explicit reconciliation.
-    return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 9_007_199_254_740_991
+    return type(value) in (int, float) and 0 <= value <= 9_007_199_254_740_991 and math.isfinite(value)
 
 
 def validate_snapshot(data):
@@ -65,17 +66,24 @@ def validate_snapshot(data):
         rows = data[key]
         require(isinstance(rows, list) and len(rows) <= MAX_ROWS, 'فهرست دفتر نامعتبر است.')
         ids = set()
+        numbers = set()
         for row in rows:
             require(isinstance(row, dict), 'رکورد نامعتبر است.')
             uid = row.get('id')
             require(isinstance(uid, str) and 0 < len(uid) <= 256 and uid not in ids, 'شناسه خالی یا تکراری.')
             ids.add(uid)
             if key == 'services':
-                require(isinstance(row.get('name'), str) and valid_amount(row.get('price')), 'تعرفه خدمت نامعتبر است.')
+                require(isinstance(row.get('name'), str) and valid_amount(row.get('price')) and
+                        all(row.get(k) is None or isinstance(row.get(k), str) for k in ('category', 'desc')), 'تعرفه خدمت نامعتبر است.')
             elif key == 'debts':
                 require(isinstance(row.get('name'), str) and valid_amount(row.get('amount')) and type(row.get('paid')) is bool, 'رکورد نسیه نامعتبر است.')
             else:
                 require(isinstance(row.get('invoiceNumber'), (str, int)) and not isinstance(row.get('invoiceNumber'), bool), 'شماره فاکتور نامعتبر است.')
+                number = str(row['invoiceNumber'])
+                canonical = number.lstrip('0') if number.isascii() and number.isdigit() else number
+                require(bool(canonical) and canonical not in numbers, 'شماره فاکتور خالی یا تکراری است.')
+                numbers.add(canonical)
+                require(all(row.get(k) is None or isinstance(row.get(k), str) for k in ('date', 'customerName', 'customerPhone', 'paymentStatus', 'discountType')), 'متن فاکتور نامعتبر است.')
                 require(isinstance(row.get('items'), list) and len(row['items']) <= 10_000, 'اقلام فاکتور نامعتبر است.')
                 for item in row['items']:
                     require(isinstance(item, dict) and isinstance(item.get('name'), str)
@@ -89,7 +97,7 @@ def validate_snapshot(data):
     logo = data['customLogo']
     # Do not mutate a legacy logo; invalid/unsupported logos block migration.
     require(logo is None or (isinstance(logo, str) and len(logo) <= 3_000_000 and
-            logo.startswith(('data:image/png;base64,', 'data:image/jpeg;base64,', 'data:image/webp;base64,', 'data:image/gif;base64,'))),
+            re.fullmatch(r'data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+', logo) is not None),
             'فرمت لوگو نامعتبر است؛ نسخه خام محفوظ می‌ماند.')
     return data
 

@@ -57,62 +57,68 @@ def run_smoke():
 
 
 def run_accounting_probe(mode, folder):
-    """Two independent EXE processes verify stable file:// LocalStorage."""
+    """Register an actual invoice and verify it from an independent process."""
     from .accounting import prepare_accounting
     from .browser import BrowserSessions, BrowserView
+    from .bridge import attach_accounting_bridge
+    from .ledger_snapshot import LedgerSnapshot
+    from PySide6.QtCore import QCoreApplication, QEvent
     app = QApplication(['JavanLinks accounting probe'])
     folder = Path(folder).resolve()
     page_path = prepare_accounting(folder)
     sessions = BrowserSessions(folder, lambda request: request.cancel())
     view = BrowserView(sessions, page_path.parent)
+    view.page().accounting_path = page_path.resolve()
+    attach_accounting_bridge(view, folder / 'accounting-data')
     view.resize(1100, 720)
     view.show()
-    done = False
-    key = 'javan_build_persistence_probe'
-    write_script = """
-(() => {
-  try {
-    const services = JSON.parse(localStorage.getItem('javan_acc_services_v2') || '[]');
-    if (!Array.isArray(services) || !services.length) return false;
-    localStorage.setItem('javan_build_persistence_probe', 'javan-ok-v050');
-    return localStorage.getItem('javan_build_persistence_probe') === 'javan-ok-v050';
-  } catch (_) { return false; }
-})()
-"""
-    read_script = """
-(() => {
-  try {
-    const services = JSON.parse(localStorage.getItem('javan_acc_services_v2') || '[]');
-    return localStorage.getItem('javan_build_persistence_probe') === 'javan-ok-v050' &&
-      Array.isArray(services) && services.length > 0 &&
-      !!document.querySelector('#header-history-count');
-  } catch (_) { return false; }
-})()
-"""
-    def finish(ok):
-        nonlocal done
-        if done:
-            return
-        done = True
-        if ok:
-            # Allow the Chromium storage writer to settle before graceful exit.
-            QTimer.singleShot(1500, lambda: app.exit(0))
-        else:
+    submitted = False
+    poll = QTimer()
+    poll.setInterval(250)
+
+    def inspect(result):
+        nonlocal submitted
+        if result == 'readonly':
             app.exit(6)
-
-    def loaded(ok):
-        if not ok:
-            finish(False)
             return
-        view.page().runJavaScript(write_script if mode == 'write' else read_script, finish)
+        if result != 'ready':
+            return
+        if mode == 'write' and not submitted:
+            submitted = True
+            view.page().runJavaScript("""
+(() => {
+  document.querySelector('#btn-add-custom-item').click();
+  const price = document.querySelector('[data-inv-edit="price"]');
+  price.value = '12345';
+  price.dispatchEvent(new Event('input', {bubbles: true}));
+  const customer = document.querySelector('#inv-customer');
+  customer.value = 'CI-persistence-probe';
+  customer.dispatchEvent(new Event('input', {bubbles: true}));
+  document.querySelector('#btn-save-invoice').click();
+})()
+""")
+            return
+        try:
+            data = LedgerSnapshot(folder / 'accounting-data').load()['data']
+            if not data or not data['services'] or len(data['invoices']) != 1:
+                return
+            invoice = data['invoices'][0]
+            if invoice.get('customerName') != 'CI-persistence-probe' or invoice.get('finalToman') != 12345:
+                app.exit(8)
+                return
+        except Exception:
+            app.exit(9)
+            return
+        poll.stop()
+        app.exit(0)
 
-    view.loadFinished.connect(loaded)
+    poll.timeout.connect(lambda: view.page().runJavaScript("document.documentElement.dataset.ledgerReady || ''", inspect))
+    view.loadFinished.connect(lambda ok: poll.start() if ok else app.exit(5))
     QTimer.singleShot(60000, lambda: app.exit(7))
     view.open_local(str(page_path))
     code = app.exec()
+    poll.stop()
     view.close()
-    # Explicitly dispose the page while its profile still exists.
     view.deleteLater()
-    from PySide6.QtCore import QCoreApplication, QEvent
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     return code

@@ -1,7 +1,8 @@
 from pathlib import Path
 from time import time_ns
+import sqlite3
 from zipfile import BadZipFile
-from PySide6.QtCore import Qt, QStandardPaths
+from PySide6.QtCore import Qt, QStandardPaths, QCoreApplication, QEvent
 from PySide6.QtGui import QKeySequence, QShortcut, QPageLayout, QPageSize
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow, QLineEdit,
@@ -15,6 +16,7 @@ from .storage import CatalogStore, atomic_write
 from .manager import ManagerDialog, warn, ask
 from .downloads import DownloadManager
 from .accounting import prepare_accounting, import_fonts
+from .bridge import attach_accounting_bridge
 
 
 def label(text, name):
@@ -60,6 +62,7 @@ class MainWindow(QMainWindow):
         self.accounting_button = self.button(row, 'حسابداری', 'حسابداری، فاکتور و دفتر نسیه (Ctrl+Shift+A)', self.open_accounting)
         self.accounting_button.setObjectName('accountingButton')
         self.accounting_button.setCheckable(True)
+        self.session_button = self.button(row, 'پایان جلسه', 'پاک کردن نشست اینترنتی مشتری؛ حسابداری محفوظ می‌ماند', self.end_customer_session)
         self.font_button = self.button(row, 'فونت‌ها', 'وارد کردن فونت‌های حسابداری از فایل ZIP یا TTF', self.choose_accounting_fonts)
         self.page_title = label('صفحه اصلی', 'pageTitle')
         self.page_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -152,18 +155,53 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentWidget(view)
             self.accounting_button.setChecked(True)
             return
+        view = None
         try:
             path = prepare_accounting(self.store.path.parent)
             view = self.make_tab(path.parent, 'حسابداری')
             if view is None:
                 self.accounting_button.setChecked(False)
                 return
+            view.page().accounting_path = path.resolve()
+            attach_accounting_bridge(view, self.store.path.parent / 'accounting-data')
             view.is_accounting = True
             view.open_local(str(path))
             self.sync()
-        except (OSError, ValueError, RuntimeError) as exc:
+        except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+            if view is not None:
+                view.is_accounting = False
+                self.close_tab(self.tabs.indexOf(view))
             self.accounting_button.setChecked(False)
             warn(self, 'باز کردن حسابداری ناموفق بود.\n' + str(exc))
+
+    def end_customer_session(self):
+        if self.print_jobs or self.downloads.active_count():
+            warn(self, 'ابتدا چاپ و دانلودهای فعال را به پایان برسانید.')
+            return
+        if not ask(self, 'همه زبانه‌های اینترنتی بسته و نشست ورود مشتری پاک شود؟ فایل‌های دانلودشده روی دیسک حذف نمی‌شوند. حسابداری و ابزارهای HTML محفوظ می‌مانند.'):
+            return
+        for i in range(self.tabs.count() - 1, -1, -1):
+            v = self.tabs.widget(i)
+            if v.root is None:
+                v.stop()
+                self.tabs.removeTab(i)
+                v.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.sessions.reset_web()
+        self.downloads.clear_finished()
+        self.sidebar.clear_active()
+        self.new_home()
+        self.status.setText('نشست اینترنتی جدید آماده است؛ فایل‌های قبلی را از مسیر دانلود بررسی کنید.')
+
+    def dispose_views(self):
+        for i in range(self.tabs.count() - 1, -1, -1):
+            v = self.tabs.widget(i)
+            v.stop()
+            self.tabs.removeTab(i)
+            v.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.sessions.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def choose_accounting_fonts(self):
         names, _ = QFileDialog.getOpenFileNames(self, 'انتخاب فایل‌های فونت ارسالی', '', 'فونت و آرشیو (*.zip *.ttf)')
@@ -332,6 +370,8 @@ class MainWindow(QMainWindow):
     def reload_or_stop(self):
         view = self.current()
         if view is not None and view not in self.print_jobs:
+            if getattr(view, 'is_accounting', False) and not view.loading and not ask(self, 'بارگذاری مجدد ممکن است پیش‌نویس ثبت‌نشده را پاک کند. ادامه؟'):
+                return
             if view.loading:
                 view.stop()
             elif view.home:
@@ -391,8 +431,8 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(v.loading)
         self.progress.setValue(v.progress_value)
         busy = v in self.print_jobs
-        self.back.setEnabled(v.history().canGoBack() and not busy)
-        self.forward.setEnabled(v.history().canGoForward() and not busy)
+        self.back.setEnabled(v.history().canGoBack() and not busy and not accounting)
+        self.forward.setEnabled(v.history().canGoForward() and not busy and not accounting)
         self.reload.setText('×' if v.loading else '↻')
         self.reload.setEnabled(not busy)
         self.zoom_label.setText(f'{round(v.zoomFactor() * 100)}%')
@@ -414,10 +454,24 @@ class MainWindow(QMainWindow):
         v = view if isinstance(view, BrowserView) else self.current()
         if v is None or v in self.print_jobs or v.loading:
             return
+        if getattr(v, 'is_accounting', False) and not isinstance(view, BrowserView):
+            v.page().runJavaScript('typeof javanPrepareCurrentPrint === "function" && javanPrepareCurrentPrint()', lambda ok: self._native_print(v) if ok else None)
+            return
+        self._native_print(v)
+
+    @staticmethod
+    def _clear_accounting_print(v):
+        if getattr(v, 'is_accounting', False):
+            v.page().runJavaScript('typeof javanClearPrint === "function" && javanClearPrint()')
+
+    def _native_print(self, v):
+        if v in self.print_jobs or self.tabs.indexOf(v) < 0:
+            return
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         dialog = QPrintDialog(printer, self)
         dialog.setWindowTitle('چاپ صفحه')
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._clear_accounting_print(v)
             return
         self.print_jobs[v] = printer
         self.message(v, 'در حال چاپ…')
@@ -427,6 +481,7 @@ class MainWindow(QMainWindow):
         if v not in self.print_jobs:
             return
         self.print_jobs.pop(v, None)
+        self._clear_accounting_print(v)
         self.message(v, 'چاپ انجام شد' if ok else 'چاپ ناموفق بود')
         if not ok:
             warn(self, 'چاپ صفحه انجام نشد.')
@@ -435,13 +490,23 @@ class MainWindow(QMainWindow):
         v = self.current()
         if v is None or v in self.print_jobs or v.loading:
             return
+        if getattr(v, 'is_accounting', False):
+            v.page().runJavaScript('typeof javanPrepareCurrentPrint === "function" && javanPrepareCurrentPrint()', lambda ok: self._save_prepared_pdf(v) if ok else None)
+            return
+        self._save_prepared_pdf(v)
+
+    def _save_prepared_pdf(self, v):
+        if v in self.print_jobs or self.tabs.indexOf(v) < 0:
+            return
         name, _ = QFileDialog.getSaveFileName(self, 'ذخیره PDF', 'page.pdf', 'PDF (*.pdf)')
         if not name:
+            self._clear_accounting_print(v)
             return
         path = Path(name)
         if path.suffix.lower() != '.pdf':
             path = path.with_suffix('.pdf')
             if path.exists() and not ask(self, 'فایل PDF موجود جایگزین شود؟'):
+                self._clear_accounting_print(v)
                 return
         self.print_jobs[v] = path
         self.message(v, 'در حال ساخت PDF…')
@@ -453,10 +518,12 @@ class MainWindow(QMainWindow):
                 atomic_write(path, bytes(data))
             except (OSError, ValueError) as exc:
                 self.print_jobs.pop(v, None)
+                self._clear_accounting_print(v)
                 self.message(v, 'ساخت PDF ناموفق بود')
                 warn(self, str(exc))
                 return
             self.print_jobs.pop(v, None)
+            self._clear_accounting_print(v)
             self.message(v, 'PDF ذخیره شد')
 
         v.page().printToPdf(complete)
