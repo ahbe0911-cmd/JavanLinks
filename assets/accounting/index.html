@@ -2,6 +2,7 @@
 <html lang="fa" dir="rtl" data-theme="light">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' qrc:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>کافی‌نت جوان | سامانه هوشمند حسابداری و صدور فاکتور</title>
 
@@ -1366,6 +1367,7 @@
   <!-- ======================================================================
        پوسته اصلی برنامه
        ====================================================================== -->
+  <div id="storage-banner" role="alert" hidden style="position:sticky;top:0;z-index:300;background:#991b1b;color:white;padding:10px 16px;font-weight:700;text-align:center;"></div>
   <div class="app-shell">
     <!-- هدر بالا -->
     <header class="topbar">
@@ -1947,11 +1949,12 @@
   <!-- ناحیه اختصاصی چاپ -->
   <div id="print-area"></div>
 
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
   <script>
     /**
      * =========================================================================
      * سامانه هوشمند حسابداری و صدور فاکتور «کافی‌نت جوان»
-     * Vanilla JavaScript خالص - بدون کتابخانه خارجی - سرعت اجرا زیر ۵۰ میلی‌ثانیه
+     * Vanilla JavaScript / native SQLite snapshot bridge
      * =========================================================================
      */
     (function () {
@@ -2054,9 +2057,19 @@
         return { jy, jm, jd };
       }
 
+      const iranDateFormatter = new Intl.DateTimeFormat('en-US-u-ca-persian-nu-latn', {
+        timeZone: 'Asia/Tehran', year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short'
+      });
+      const iranClockFormatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+      function iranTodayParts() {
+        const p = Object.fromEntries(iranDateFormatter.formatToParts(new Date()).map(x => [x.type, x.value]));
+        return {jy: Number(p.year), jm: Number(p.month), jd: Number(p.day), weekday: p.weekday};
+      }
+
       function getTodayJalali() {
-        const now = new Date();
-        const { jy, jm, jd } = gregorianToJalali(now.getFullYear(), now.getMonth() + 1, now.getDate());
+        const {jy, jm, jd} = iranTodayParts();
         const pad = (n) => String(n).padStart(2, '0');
         return `${jy}/${pad(jm)}/${pad(jd)}`;
       }
@@ -2065,22 +2078,16 @@
         const now = new Date();
         const days = ['یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه', 'شنبه'];
         const months = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-        const { jy, jm, jd } = gregorianToJalali(now.getFullYear(), now.getMonth() + 1, now.getDate());
-        return `${days[now.getDay()]}، ${jd} ${months[jm - 1]} ${jy}`;
+        const {jy, jm, jd, weekday} = iranTodayParts();
+        const wd = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(weekday);
+        return `${days[wd < 0 ? now.getDay() : wd]}، ${jd} ${months[jm - 1]} ${jy}`;
       }
 
       function updateIranClock() {
         const clockEl = document.getElementById('header-iran-clock');
         if (!clockEl) return;
         try {
-          const formatter = new Intl.DateTimeFormat('en-GB', {
-            timeZone: 'Asia/Tehran',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false
-          });
-          clockEl.textContent = formatter.format(new Date());
+          clockEl.textContent = iranClockFormatter.format(new Date());
         } catch (err) {
           // فالبک آفلاین UTC+3:30
           const now = new Date();
@@ -2156,21 +2163,19 @@
       }
 
       function isValidJalaliDate(str) {
-        return /^\d{4}\/\d{2}\/\d{2}$/.test(str);
-      }
-
-      /* بازمحاسبه مبالغ فاکتور از روی اقلام تا تاریخچه، چاپ و CSV همیشه با هم یکسان باشند */
-      function normalizeInvoice(inv) {
-        if (!inv || typeof inv !== 'object') return null;
-        inv.items = Array.isArray(inv.items) ? inv.items : [];
-        inv.date = normalizeJalaliDate(inv.date || '');
-        const t = computeTotals(inv.items, inv.discountType || 'amount', inv.discountValue || 0);
-        inv.subtotal = t.subtotal;
-        inv.discountAmount = t.discountAmount;
-        inv.finalToman = t.finalToman;
-        inv.finalRial = t.finalRial;
-        if (!inv.id) inv.id = generateId('inv');
-        return inv;
+        const m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(str);
+        if (!m) return false;
+        const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+        if (y < 1200 || y > 1600 || mo < 1 || mo > 12 || d < 1) return false;
+        if (mo <= 6) return d <= 31;
+        if (mo <= 11 || d <= 29) return d <= 30;
+        if (d !== 30) return false;
+        // Use the existing calendar conversion to check the last day of Esfand.
+        for (let day = 17; day <= 23; day++) {
+          const j = gregorianToJalali(y + 622, 3, day);
+          if (j.jy === y && j.jm === 12 && j.jd === 30) return true;
+        }
+        return false;
       }
 
       function debounce(fn, ms = 120) {
@@ -2232,78 +2237,203 @@
       /* -----------------------------------------------------------------------
          ۵. مدیریت LocalStorage و تم شب/روز
          ----------------------------------------------------------------------- */
-      function loadStorage() {
-        try {
-          const rawServices = localStorage.getItem(KEYS.SERVICES);
-          if (rawServices) {
-            const parsed = JSON.parse(rawServices);
-            state.services = Array.isArray(parsed) && parsed.length > 0 ? parsed : [...DEFAULT_SERVICES];
-          } else {
-            state.services = [...DEFAULT_SERVICES];
-            saveServices();
-          }
-
-          const rawInvoices = localStorage.getItem(KEYS.INVOICES);
-          if (rawInvoices) {
-            const parsedInv = JSON.parse(rawInvoices);
-            state.invoices = Array.isArray(parsedInv) ? parsedInv.map(normalizeInvoice).filter(Boolean) : [];
-          }
-
-          const rawDebts = localStorage.getItem(KEYS.DEBTS);
-          if (rawDebts) {
-            const pd = JSON.parse(rawDebts);
-            state.debts = Array.isArray(pd) ? pd.filter(d => d && d.id) : [];
-          }
-
-          const rawNext = localStorage.getItem(KEYS.NEXT_NUM);
-          if (rawNext && !isNaN(Number(rawNext))) {
-            state.nextInvoiceNumber = Number(rawNext);
-          }
-
-          const rawLogo = localStorage.getItem(KEYS.LOGO);
-          if (rawLogo) state.customLogo = rawLogo;
-
-          const rawSettings = localStorage.getItem(KEYS.SETTINGS);
-          if (rawSettings) {
-            state.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(rawSettings) };
-          }
-
-          const savedTheme = localStorage.getItem(KEYS.THEME);
-          if (savedTheme === 'dark' || savedTheme === 'light') {
-            state.theme = savedTheme;
-          }
-        } catch (err) {
-          console.error('Storage read error:', err);
-          state.services = [...DEFAULT_SERVICES];
-        }
+      const clone = value => JSON.parse(JSON.stringify(value));
+      let nativeLedger = null, revision = 0, committed = null;
+      let storageLocked = true, canRecover = false, saving = false;
+      function showStorageBanner(message) {
+        const el = document.getElementById('storage-banner');
+        el.textContent = message || '';
+        el.hidden = !message;
       }
-
-      function saveServices() {
-        try {
-          localStorage.setItem(KEYS.SERVICES, JSON.stringify(state.services));
-        } catch (err) {
-          showToast('فضای ذخیره‌سازی مرورگر پر شده است.', 'error');
-        }
+      function lockStorage(message) {
+        storageLocked = true;
+        showStorageBanner(message);
       }
-
-      function saveInvoices() {
-        try {
-          localStorage.setItem(KEYS.INVOICES, JSON.stringify(state.invoices));
-          localStorage.setItem(KEYS.NEXT_NUM, String(state.nextInvoiceNumber));
-          document.getElementById('header-history-count').textContent = state.invoices.length;
-        } catch (err) {
-          showToast('خطا در ذخیره تاریخچه فاکتورها.', 'error');
-        }
+      function snapshot() {
+        return clone({
+          services: state.services, invoices: state.invoices, debts: state.debts,
+          nextInvoiceNumber: state.nextInvoiceNumber, customLogo: state.customLogo,
+          settings: state.settings, theme: state.theme
+        });
       }
-
-      function saveDebts() {
-        try {
-          localStorage.setItem(KEYS.DEBTS, JSON.stringify(state.debts));
-        } catch (err) {
-          showToast('خطا در ذخیره دفتر نسیه.', 'error');
-        }
+      function applySnapshot(data) {
+        state.services = clone(data.services);
+        state.invoices = clone(data.invoices);
+        state.debts = clone(data.debts);
+        state.nextInvoiceNumber = data.nextInvoiceNumber;
+        state.customLogo = data.customLogo;
+        state.settings = {...DEFAULT_SETTINGS, ...data.settings};
+        state.theme = data.theme;
+      }
+      function refreshSavedState() {
+        document.getElementById('header-history-count').textContent = state.invoices.length;
         updateDebtBadge();
+        applyTheme(state.theme);
+        renderLogos();
       }
+      function nativeCall(method, ...args) {
+        return new Promise((resolve, reject) => {
+          if (!nativeLedger) { reject(new Error('ارتباط پایگاه در دسترس نیست.')); return; }
+          const timer = setTimeout(() => reject(new Error('پاسخ پایگاه نامشخص است؛ برنامه را دوباره باز کنید.')), 45000);
+          try {
+            nativeLedger[method](...args, raw => {
+              clearTimeout(timer);
+              try { resolve(JSON.parse(raw)); }
+              catch (_) { reject(new Error('پاسخ نامعتبر پایگاه.')); }
+            });
+          } catch (e) { clearTimeout(timer); reject(e); }
+        });
+      }
+      function connectLedger() {
+        return new Promise((resolve, reject) => {
+          if (typeof QWebChannel === 'undefined' || typeof qt === 'undefined') {
+            reject(new Error('این نسخه حسابداری باید در برنامه دسکتاپ باز شود.'));
+            return;
+          }
+          const timer = setTimeout(() => reject(new Error('ارتباط پایگاه برقرار نشد.')), 10000);
+          new QWebChannel(qt.webChannelTransport, channel => {
+            clearTimeout(timer);
+            nativeLedger = channel.objects.ledger;
+            if (nativeLedger) resolve(); else reject(new Error('پایگاه حسابداری در دسترس نیست.'));
+          });
+        });
+      }
+      function safeRows(value, kind) {
+        if (!Array.isArray(value)) throw Error(kind);
+        const seen = new Set();
+        const num = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+        for (const row of value) {
+          if (!row || typeof row.id !== 'string' || !row.id || seen.has(row.id)) throw Error(kind);
+          seen.add(row.id);
+          if (kind === 'services' && (typeof row.name !== 'string' || !num(row.price) ||
+            (row.category != null && typeof row.category !== 'string') ||
+            (row.desc != null && typeof row.desc !== 'string'))) throw Error(kind);
+          if (kind === 'debts' && (typeof row.name !== 'string' || !num(row.amount) || typeof row.paid !== 'boolean')) throw Error(kind);
+          if (kind === 'invoices' && (!Array.isArray(row.items) ||
+            row.items.some(x => !x || typeof x.name !== 'string' || !num(x.price) || !num(x.qty)) ||
+            ['subtotal','discountAmount','finalToman','finalRial'].some(k => !num(row[k])))) throw Error(kind);
+        }
+        return clone(value);
+      }
+      function safeLogo(value) {
+        if (value == null || value === '') return null;
+        if (typeof value !== 'string' || value.length > 3000000 ||
+            !/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(value)) throw Error('لوگو نامعتبر است.');
+        return value;
+      }
+      function safeSettings(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value) ||
+            Object.values(value).some(x => typeof x !== 'string')) throw Error('تنظیمات نامعتبر است.');
+        return {...DEFAULT_SETTINGS, ...value};
+      }
+      function safeCounter(value, invoices) {
+        let n = Number(value);
+        if (!Number.isSafeInteger(n) || n < 1) throw Error('شمارنده نامعتبر است.');
+        for (const i of invoices) {
+          const x = Number(i.invoiceNumber);
+          if (Number.isSafeInteger(x) && x >= n) n = x + 1;
+        }
+        if (!Number.isSafeInteger(n)) throw Error('شمارنده نامعتبر است.');
+        return n;
+      }
+      function parseLegacy(raw, readErrors) {
+        const errors = [...readErrors];
+        function each(key, operation) {
+          try { if (raw[key] != null) operation(raw[key]); }
+          catch (_) { errors.push(key); }
+        }
+        state.services = clone(DEFAULT_SERVICES);
+        each(KEYS.SERVICES, x => state.services = safeRows(JSON.parse(x), 'services'));
+        each(KEYS.INVOICES, x => state.invoices = safeRows(JSON.parse(x), 'invoices'));
+        each(KEYS.DEBTS, x => state.debts = safeRows(JSON.parse(x), 'debts'));
+        each(KEYS.NEXT_NUM, x => state.nextInvoiceNumber = safeCounter(x, state.invoices));
+        try { state.nextInvoiceNumber = safeCounter(state.nextInvoiceNumber, state.invoices); }
+        catch (_) { errors.push(KEYS.NEXT_NUM); }
+        each(KEYS.LOGO, x => state.customLogo = safeLogo(x));
+        each(KEYS.SETTINGS, x => state.settings = safeSettings(JSON.parse(x)));
+        each(KEYS.THEME, x => {
+          if (!['light','dark'].includes(x)) throw Error('theme');
+          state.theme = x;
+        });
+        return errors;
+      }
+      async function loadStorage() {
+        try {
+          await connectLedger();
+          const loaded = await nativeCall('load');
+          if (!loaded.ok) throw Error(loaded.error);
+          revision = loaded.revision;
+          if (loaded.data !== null) {
+            applySnapshot(loaded.data);
+            committed = snapshot();
+            storageLocked = false;
+            canRecover = true;
+            return;
+          }
+          const raw = {}, readErrors = [];
+          for (const key of Object.values(KEYS)) {
+            try { raw[key] = localStorage.getItem(key); }
+            catch (_) { readErrors.push(key); }
+          }
+          // Archive all original readable keys before parsing or writing SQLite.
+          const archived = await nativeCall('archiveLegacy', JSON.stringify(raw));
+          if (!archived.ok) throw Error(archived.error);
+          canRecover = true;
+          const errors = parseLegacy(raw, readErrors);
+          committed = snapshot();
+          if (errors.length) {
+            lockStorage('داده قدیمی ناقص یا خراب است؛ هیچ کلید اصلی بازنویسی نشده. نسخه خام در backups محفوظ است. بازیابی فقط با فایل معتبر.');
+            return;
+          }
+          const created = await nativeCall('save', 0, JSON.stringify(snapshot()), 'migration');
+          if (!created.ok) throw Error(created.error);
+          revision = created.revision;
+          committed = snapshot();
+          storageLocked = false;
+          if (created.warning) showStorageBanner(created.warning);
+        } catch (e) {
+          lockStorage('حسابداری فقط خواندنی است: ' + String(e.message || e));
+        }
+      }
+      async function persist(reason = 'save') {
+        if (saving || (storageLocked && !(reason === 'restore' && canRecover))) {
+          if (committed) applySnapshot(committed);
+          refreshSavedState();
+          showToast('ثبت انجام نشد؛ حسابداری در حالت حفاظت از داده است.', 'error');
+          return false;
+        }
+        saving = true;
+        document.body.inert = true;
+        try {
+          const candidate = snapshot();
+          const answer = await nativeCall('save', revision, JSON.stringify(candidate), reason);
+          if (!answer.ok) {
+            if (committed) applySnapshot(committed);
+            refreshSavedState();
+            showStorageBanner('ثبت انجام نشد: ' + answer.error);
+            showToast('اطلاعات ذخیره نشد؛ فرم شما حفظ شد.', 'error');
+            return false;
+          }
+          revision = answer.revision;
+          committed = candidate;
+          storageLocked = false;
+          showStorageBanner(answer.warning);
+          refreshSavedState();
+          return true;
+        } catch (e) {
+          if (committed) applySnapshot(committed);
+          refreshSavedState();
+          lockStorage('وضعیت ثبت نامشخص است؛ پیش از ادامه برنامه را ببندید و دوباره باز کنید.');
+          showToast('ثبت تأیید نشد. فرم حفظ شده است.', 'error');
+          return false;
+        } finally {
+          saving = false;
+          document.body.inert = false;
+        }
+      }
+      async function saveServices() { return persist(); }
+      async function saveInvoices() { return persist(); }
+      async function saveDebts() { return persist(); }
 
       function updateDebtBadge() {
         const el = document.getElementById('header-debts-count');
@@ -2387,7 +2517,7 @@
           hintEl.textContent = n ? `${formatNumber(n)} تومان — ${numberToPersianWords(n)} تومان` : '';
         });
 
-        document.getElementById('debt-form').addEventListener('submit', (e) => {
+        document.getElementById('debt-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const name = nameEl.value.trim().replace(/\s+/g, ' ');
           const amount = parseAmount(amountEl.value);
@@ -2403,7 +2533,7 @@
             paidDate: null,
             createdAt: Date.now()
           });
-          saveDebts();
+          if (!await saveDebts()) return;
           nameEl.value = '';
           amountEl.value = '';
           hintEl.textContent = '';
@@ -2418,7 +2548,7 @@
         });
         document.getElementById('debt-search').addEventListener('input', debounce(renderDebtsModal));
 
-        document.getElementById('debt-tbody').addEventListener('click', (e) => {
+        document.getElementById('debt-tbody').addEventListener('click', async (e) => {
           const btn = e.target.closest('[data-debt-act]');
           if (!btn) return;
           const id = btn.dataset.id;
@@ -2429,19 +2559,19 @@
           if (act === 'pay') {
             d.paid = true;
             d.paidDate = getTodayJalali();
-            saveDebts();
+            if (!await saveDebts()) return;
             renderDebtsModal();
             showToast(`نسیه «${d.name}» پرداخت شد ✓`, 'success');
           } else if (act === 'reopen') {
             d.paid = false;
             d.paidDate = null;
-            saveDebts();
+            if (!await saveDebts()) return;
             renderDebtsModal();
             showToast(`نسیه «${d.name}» دوباره باز شد.`, 'info');
           } else if (act === 'delete') {
-            openConfirm('حذف نسیه', `نسیه «${d.name}» (${formatNumber(d.amount)} تومان) حذف شود؟`, () => {
+            openConfirm('حذف نسیه', `نسیه «${d.name}» (${formatNumber(d.amount)} تومان) حذف شود؟`, async () => {
               state.debts = state.debts.filter(x => x.id !== id);
-              saveDebts();
+              if (!await saveDebts()) return;
               renderDebtsModal();
               showToast('نسیه حذف شد.', 'info');
             }, 'حذف');
@@ -2449,26 +2579,11 @@
         });
       }
 
-      function saveSettings() {
-        try {
-          localStorage.setItem(KEYS.SETTINGS, JSON.stringify(state.settings));
-        } catch (err) {
-          showToast('خطا در ذخیره تنظیمات.', 'error');
-        }
-      }
-
-      function saveLogo(dataUrl) {
-        try {
-          if (dataUrl) {
-            localStorage.setItem(KEYS.LOGO, dataUrl);
-          } else {
-            localStorage.removeItem(KEYS.LOGO);
-          }
-          state.customLogo = dataUrl || null;
-          renderLogos();
-        } catch (err) {
-          showToast('حجم تصویر لوگو زیاد است و ذخیره نشد.', 'error');
-        }
+      async function saveSettings() { return persist(); }
+      async function saveLogo(dataUrl) {
+        try { state.customLogo = safeLogo(dataUrl); }
+        catch (_) { showToast('لوگو باید PNG، JPEG، WEBP یا GIF معتبر باشد.', 'error'); return false; }
+        return persist();
       }
 
       function applyTheme(theme) {
@@ -2476,12 +2591,12 @@
         document.documentElement.setAttribute('data-theme', theme);
         document.getElementById('theme-icon-sun').style.display = theme === 'dark' ? 'block' : 'none';
         document.getElementById('theme-icon-moon').style.display = theme === 'light' ? 'block' : 'none';
-        try { localStorage.setItem(KEYS.THEME, theme); } catch (_) {}
+
       }
 
       function getLogoHtml() {
         return state.customLogo
-          ? `<img src="${state.customLogo}" alt="لوگوی کافی‌نت جوان" />`
+          ? `<img src="${escapeHtml(state.customLogo)}" alt="لوگوی کافی‌نت جوان" />`
           : DEFAULT_LOGO_SVG;
       }
 
@@ -2554,12 +2669,12 @@
                   <input type="text" class="inline-text-input" data-inv-edit="name" data-idx="${idx}" value="${escapeHtml(item.name)}" placeholder="شرح خدمت..." />
                 </td>
                 <td>
-                  <input type="number" class="inline-price-input num-tabular" data-inv-edit="price" data-idx="${idx}" min="0" step="500" value="${item.price}" />
+                  <input type="number" class="inline-price-input num-tabular" data-inv-edit="price" data-idx="${idx}" min="0" step="500" value="${escapeHtml(item.price)}" />
                 </td>
                 <td style="text-align:center;">
                   <div class="qty-stepper">
                     <button type="button" class="qty-btn" data-qty-act="inc" data-idx="${idx}" aria-label="افزایش">+</button>
-                    <input type="number" class="qty-val num-tabular" data-inv-edit="qty" data-idx="${idx}" min="1" value="${item.qty}" />
+                    <input type="number" class="qty-val num-tabular" data-inv-edit="qty" data-idx="${idx}" min="1" value="${escapeHtml(item.qty)}" />
                     <button type="button" class="qty-btn" data-qty-act="dec" data-idx="${idx}" aria-label="کاهش">−</button>
                   </div>
                 </td>
@@ -2717,7 +2832,7 @@
                   ${srv.desc ? `<div class="service-desc">${escapeHtml(srv.desc)}</div>` : ''}
                   <div style="display:flex; gap:5px; flex-wrap:wrap; margin-top:4px;">
                     <span class="badge">${escapeHtml(srv.category || 'سایر')}</span>
-                    ${curQty ? `<span class="badge badge-paid">در فاکتور: ${curQty}</span>` : ''}
+                    ${curQty ? `<span class="badge badge-paid">در فاکتور: ${escapeHtml(curQty)}</span>` : ''}
                   </div>
                 </div>
               </div>
@@ -2882,6 +2997,10 @@
          ----------------------------------------------------------------------- */
       function buildPrintHtml(inv, sizeMode) {
         const t = computeTotals(inv.items || [], inv.discountType || 'amount', inv.discountValue || 0);
+        if (inv.id && ['subtotal','discountAmount','finalToman','finalRial'].every(k => typeof inv[k] === 'number' && Number.isFinite(inv[k]))) {
+          for (const k of ['subtotal','discountAmount','finalToman','finalRial']) t[k] = inv[k];
+          t.wordsToman = numberToPersianWords(t.finalToman) + ' تومان';
+        }
         const shopPhone = state.settings.phone ? `تلفن: ${escapeHtml(state.settings.phone)}` : '';
         const shopAddr = state.settings.address ? escapeHtml(state.settings.address) : '';
         const footerNote = escapeHtml(state.settings.footerNote || DEFAULT_SETTINGS.footerNote);
@@ -3016,7 +3135,7 @@
         `;
       }
 
-      function executePrint(inv) {
+      function preparePrint(inv) {
         if (!inv.items || inv.items.length === 0) {
           showToast('فاکتور خالی است! ابتدا از بخش «خدمات» اقلام را اضافه کنید.', 'error');
           return;
@@ -3033,13 +3152,18 @@
         }
 
         document.getElementById('print-area').innerHTML = buildPrintHtml(inv, sizeMode);
-        window.print();
+        return true;
       }
+      function executePrint(inv) { if (preparePrint(inv)) window.print(); }
+      window.javanPrepareCurrentPrint = () => !!preparePrint(state.invoice);
+      window.javanClearPrint = () => { document.getElementById('print-area').replaceChildren(); };
+      // Qt clears this after the native print/PDF completion, not before rendering.
 
       /* -----------------------------------------------------------------------
          ۱۱. پشتیبان‌گیری JSON و خروجی اکسل CSV فارسی با UTF-8 BOM
          ----------------------------------------------------------------------- */
       function exportJsonBackup() {
+        if (storageLocked) { showToast('خروجی ناقص مجاز نیست؛ آرشیو خام را از پوشه backups بردارید.', 'error'); return; }
         try {
           const payload = {
             app: 'JavanCafeNetAccounting',
@@ -3051,7 +3175,8 @@
               nextInvoiceNumber: state.nextInvoiceNumber,
               debts: state.debts,
               customLogo: state.customLogo,
-              settings: state.settings
+              settings: state.settings,
+              theme: state.theme
             }
           };
           const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
@@ -3063,45 +3188,49 @@
           a.click();
           a.remove();
           URL.revokeObjectURL(url);
-          showToast('فایل پشتیبان JSON با موفقیت دانلود شد.', 'success');
+          showToast('درخواست ذخیره فایل پشتیبان ارسال شد؛ مقصد را در پنجره دانلود انتخاب کنید.', 'info');
         } catch (err) {
           showToast('خطا در ایجاد فایل پشتیبان.', 'error');
         }
       }
 
       function importJsonBackup(file) {
+        if (!file || file.size > 64 * 1024 * 1024) {
+          showToast('حجم فایل پشتیبان نامعتبر است.', 'error'); return;
+        }
         const reader = new FileReader();
+        reader.onerror = () => showToast('خواندن فایل پشتیبان ناموفق بود.', 'error');
         reader.onload = (e) => {
           try {
             const parsed = JSON.parse(e.target.result);
+            if (parsed.app && parsed.app !== 'JavanCafeNetAccounting') throw Error('app');
+            if (parsed.version != null && parsed.version !== 3) throw Error('version');
             const d = parsed.data || parsed;
-            if (!Array.isArray(d.services) || !Array.isArray(d.invoices)) {
-              showToast('ساختار فایل پشتیبان نامعتبر است.', 'error');
-              return;
-            }
-            openConfirm(
-              'بازیابی فایل پشتیبان',
-              `اطلاعات فعلی با ${d.services.length} خدمت، ${d.invoices.length} فاکتور${Array.isArray(d.debts) ? ' و ' + d.debts.length + ' نسیه' : ''} جایگزین شود؟`,
-              () => {
-                state.services = d.services;
-                state.invoices = d.invoices.map(normalizeInvoice).filter(Boolean);
-                if (d.nextInvoiceNumber && !isNaN(Number(d.nextInvoiceNumber))) {
-                  state.nextInvoiceNumber = Number(d.nextInvoiceNumber);
-                }
-                if (Array.isArray(d.debts)) { state.debts = d.debts.filter(x => x && x.id); saveDebts(); }
-                if (d.settings) state.settings = { ...DEFAULT_SETTINGS, ...d.settings };
-                saveServices();
-                saveInvoices();
-                saveSettings();
-                saveLogo(d.customLogo || null);
-                resetInvoice(false);
-                closeModal('settings-modal');
-                showToast('اطلاعات با موفقیت بازیابی شد.', 'success');
-              },
-              'بازیابی اطلاعات'
-            );
-          } catch (err) {
-            showToast('فایل انتخاب‌شده JSON معتبر نیست.', 'error');
+            // Do not silently preserve or discard a missing debt list.
+            const next = {
+              services: safeRows(d.services, 'services'),
+              invoices: safeRows(d.invoices, 'invoices'),
+              debts: safeRows(d.debts, 'debts'),
+              nextInvoiceNumber: safeCounter(d.nextInvoiceNumber, d.invoices),
+              customLogo: safeLogo(d.customLogo),
+              settings: safeSettings(d.settings),
+              theme: d.theme == null ? state.theme : d.theme
+            };
+            if (!['light','dark'].includes(next.theme)) throw Error('theme');
+            const sum = rows => rows.reduce((n, r) => n + Number(r.finalToman), 0);
+            const message = 'فاکتور فعلی: ' + state.invoices.length + ' | جمع: ' + formatNumber(sum(state.invoices)) +
+              ' تومان؛ پشتیبان: ' + next.invoices.length + ' | جمع: ' + formatNumber(sum(next.invoices)) +
+              ' تومان؛ نسیه فعلی: ' + state.debts.length + '، پشتیبان: ' + next.debts.length +
+              '. قبل از جایگزینی، نسخه قبلی روی دیسک محفوظ می‌شود. ادامه؟';
+            openConfirm('بازیابی فایل پشتیبان', message, async () => {
+              applySnapshot(next);
+              if (!await persist('restore')) return;
+              resetInvoice(false);
+              closeModal('settings-modal');
+              showToast('اطلاعات با موفقیت بازیابی شد.', 'success');
+            }, 'بازیابی اطلاعات');
+          } catch (_) {
+            showToast('فایل پشتیبان ناقص یا نامعتبر است؛ هیچ داده‌ای تغییر نکرد.', 'error');
           }
         };
         reader.readAsText(file);
@@ -3112,7 +3241,7 @@
           showToast('هیچ فاکتوری در تاریخچه برای خروجی اکسل وجود ندارد.', 'error');
           return;
         }
-        const csvCell = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+        const csvCell = (val) => { let s = String(val ?? ''); if (/^[\s]*[=+\-@]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
         const headers = ['شماره فاکتور', 'تاریخ شمسی', 'نام مشتری', 'شماره تماس', 'وضعیت پرداخت', 'تعداد اقلام', 'جمع کل (تومان)', 'تخفیف (تومان)', 'قابل پرداخت (تومان)', 'قابل پرداخت (ریال)'];
         const lines = [headers.map(csvCell).join(',')];
 
@@ -3186,8 +3315,9 @@
         });
 
         // تغییر تم شب/روز
-        document.getElementById('btn-toggle-theme').addEventListener('click', () => {
-          applyTheme(state.theme === 'dark' ? 'light' : 'dark');
+        document.getElementById('btn-toggle-theme').addEventListener('click', async () => {
+          state.theme = state.theme === 'dark' ? 'light' : 'dark';
+          await persist();
         });
 
         // آپلود لوگو (از هدر و از مودال تنظیمات)
@@ -3206,16 +3336,16 @@
             return;
           }
           const reader = new FileReader();
-          reader.onload = (ev) => {
-            saveLogo(ev.target.result);
+          reader.onload = async (ev) => {
+            if (!await saveLogo(ev.target.result)) return;
             showToast('لوگوی اختصاصی ذخیره شد.', 'success');
           };
           reader.readAsDataURL(file);
           logoInput.value = '';
         });
 
-        document.getElementById('btn-settings-reset-logo').addEventListener('click', () => {
-          saveLogo(null);
+        document.getElementById('btn-settings-reset-logo').addEventListener('click', async () => {
+          if (!await saveLogo(null)) return;
           showToast('لوگوی پیش‌فرض بازیابی شد.', 'info');
         });
 
@@ -3328,13 +3458,14 @@
 
         document.getElementById('btn-print-invoice').addEventListener('click', () => executePrint(state.invoice));
 
-        document.getElementById('btn-save-invoice').addEventListener('click', () => {
+        document.getElementById('btn-save-invoice').addEventListener('click', async () => {
           if (state.invoice.items.length === 0) {
             showToast('فاکتور خالی است! ابتدا خدمتی اضافه کنید.', 'error');
             return;
           }
 
           const invNumber = toEnDigits(state.invoice.invoiceNumber).trim() || String(state.nextInvoiceNumber);
+          if (!/^\d{1,12}$/.test(invNumber) || Number(invNumber) < 1) { showToast('شماره فاکتور باید عدد صحیح مثبت باشد.', 'error'); return; }
           const editingId = state.invoice.editingId;
 
           // جلوگیری از شماره فاکتور تکراری
@@ -3353,6 +3484,9 @@
           }
 
           const t = computeTotals(state.invoice.items, state.invoice.discountType, state.invoice.discountValue);
+          if (state.invoice.items.some(i => !Number.isSafeInteger(i.price) || i.price < 0 || !Number.isSafeInteger(i.qty) || i.qty < 1) || !Number.isSafeInteger(t.subtotal) || t.subtotal > 1000000000000 || (state.invoice.discountType === 'amount' && !Number.isSafeInteger(state.invoice.discountValue))) {
+            showToast('قیمت، تعداد و تخفیف مبلغی باید صحیح باشند؛ سقف جمع یک تریلیون تومان است.', 'error'); return;
+          }
           const existingIdx = editingId ? state.invoices.findIndex(i => i.id === editingId) : -1;
           const prev = existingIdx !== -1 ? state.invoices[existingIdx] : null;
 
@@ -3384,7 +3518,7 @@
             else state.nextInvoiceNumber += 1;
           }
 
-          saveInvoices();
+          if (!await saveInvoices()) return;
           resetInvoice(false);
           showToast(prev
             ? `فاکتور شماره #${record.invoiceNumber} ویرایش شد.`
@@ -3423,7 +3557,7 @@
         document.getElementById('btn-confirm-services').addEventListener('click', addSelectedServicesToInvoice);
 
         // رویدادهای تب انبار داخل مودال خدمات
-        document.getElementById('inventory-form').addEventListener('submit', (e) => {
+        document.getElementById('inventory-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const editId = document.getElementById('inv-edit-id').value;
           const name = document.getElementById('inv-name').value.trim();
@@ -3432,19 +3566,21 @@
           const desc = document.getElementById('inv-desc').value.trim();
 
           if (!name) return;
+          if (!Number.isSafeInteger(price) || price > 1000000000000) { showToast('قیمت خدمت باید عدد صحیح و در محدوده مجاز باشد.', 'error'); return; }
 
           if (editId) {
             const idx = state.services.findIndex(s => s.id === editId);
             if (idx !== -1) {
               state.services[idx] = { ...state.services[idx], name, price, category, desc };
-              showToast('خدمت با موفقیت ویرایش شد.', 'success');
+
             }
           } else {
             state.services.unshift({ id: generateId('srv'), name, price, category, desc });
-            showToast('خدمت جدید در انبار ثبت شد.', 'success');
+
           }
 
-          saveServices();
+          if (!await saveServices()) return;
+          showToast(editId ? 'خدمت ویرایش شد.' : 'خدمت جدید ثبت شد.', 'success');
           resetInventoryForm();
           renderInventoryTable();
           renderServicesPickGrid();
@@ -3472,10 +3608,10 @@
             document.getElementById('btn-inv-cancel-edit').style.display = 'inline-flex';
             document.getElementById('inv-name').focus();
           } else if (act === 'delete') {
-            openConfirm('حذف خدمت', `آیا از حذف «${srv.name}» از انبار مطمئن هستید؟`, () => {
+            openConfirm('حذف خدمت', `آیا از حذف «${srv.name}» از انبار مطمئن هستید؟`, async () => {
               state.services = state.services.filter(s => s.id !== id);
               state.modalSelectedIds.delete(id);
-              saveServices();
+              if (!await saveServices()) return;
               renderInventoryTable();
               renderServicesPickGrid();
               showToast('خدمت از انبار حذف شد.', 'info');
@@ -3526,10 +3662,10 @@
             closeModal('history-modal');
             showToast(`فاکتور شماره #${inv.invoiceNumber} بارگذاری شد؛ با «ثبت» همین فاکتور ویرایش می‌شود (فاکتور جدید نمی‌سازد).`, 'info');
           } else if (act === 'delete') {
-            openConfirm('حذف فاکتور', `آیا از حذف فاکتور شماره #${inv.invoiceNumber} مطمئن هستید؟`, () => {
+            openConfirm('حذف فاکتور', `آیا از حذف فاکتور شماره #${inv.invoiceNumber} مطمئن هستید؟`, async () => {
               state.invoices = state.invoices.filter(i => i.id !== id);
+              if (!await saveInvoices()) return;
               if (state.invoice.editingId === id) state.invoice.editingId = null;
-              saveInvoices();
               renderHistoryModal();
               showToast('فاکتور حذف شد.', 'info');
             }, 'حذف فاکتور');
@@ -3544,11 +3680,11 @@
           document.getElementById('settings-modal').classList.add('open');
         });
 
-        document.getElementById('btn-save-settings').addEventListener('click', () => {
+        document.getElementById('btn-save-settings').addEventListener('click', async () => {
           state.settings.phone = document.getElementById('set-phone').value.trim();
           state.settings.address = document.getElementById('set-address').value.trim();
           state.settings.footerNote = document.getElementById('set-footer-note').value.trim() || DEFAULT_SETTINGS.footerNote;
-          saveSettings();
+          if (!await saveSettings()) return;
           showToast('تنظیمات کافی‌نت ذخیره شد.', 'success');
         });
 
@@ -3564,17 +3700,19 @@
 
         // رویدادهای مودال تاییدیه
         document.getElementById('confirm-cancel').addEventListener('click', closeConfirm);
-        document.getElementById('confirm-ok').addEventListener('click', () => {
-          if (typeof pendingConfirmAction === 'function') pendingConfirmAction();
+        document.getElementById('confirm-ok').addEventListener('click', async () => {
+          const action = pendingConfirmAction;
           closeConfirm();
+          if (typeof action === 'function') await action();
         });
       }
 
       /* -----------------------------------------------------------------------
          ۱۳. راه‌اندازی اولیه
          ----------------------------------------------------------------------- */
-      function init() {
-        loadStorage();
+      async function init() {
+        document.body.inert = true;
+        try { await loadStorage(); } finally { document.body.inert = false; }
         applyTheme(state.theme);
         renderLogos();
         document.getElementById('header-jalali-date').textContent = getFullJalaliHeaderLabel();
@@ -3595,6 +3733,7 @@
         bindDebtEvents();
         updateDebtBadge();
         resetInvoice(false);
+        document.documentElement.dataset.ledgerReady = storageLocked ? 'readonly' : 'ready';
       }
 
       document.addEventListener('DOMContentLoaded', init);
