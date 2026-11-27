@@ -57,6 +57,14 @@ class LocalPolicy(QWebEngineUrlRequestInterceptor):
 
 
 class LocalPage(BrowserPage):
+    console_diagnostic = None
+
+    def javaScriptConsoleMessage(self, level, message, line_number, source_id):
+        # Only the synthetic CI probe enables this diagnostic callback.
+        if self.console_diagnostic is not None:
+            self.console_diagnostic(f'JS console line {line_number}: {message}')
+        super().javaScriptConsoleMessage(level, message, line_number, source_id)
+
     def __init__(self, profile, policy, parent):
         super().__init__(profile, parent)
         self.policy = policy

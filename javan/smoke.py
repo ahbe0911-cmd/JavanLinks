@@ -63,9 +63,19 @@ def run_accounting_probe(mode, folder):
     from .bridge import attach_accounting_bridge
     from .ledger_snapshot import LedgerSnapshot
     from hashlib import sha256
+    import json
+    import traceback
     from PySide6.QtCore import QCoreApplication, QEvent
     app = QApplication(['JavanLinks accounting probe'])
     folder = Path(folder).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    log_path = folder / f'probe-{mode}.log'
+
+    def log(message):
+        with log_path.open('a', encoding='utf-8') as stream:
+            stream.write(str(message) + '\n')
+
+    log('probe start: ' + mode)
     page_path = prepare_accounting(folder)
     if mode == 'seed':
         legacy_key = sha256(str(page_path.parent.resolve()).encode('utf-8')).hexdigest()[:32]
@@ -73,17 +83,28 @@ def run_accounting_probe(mode, folder):
     sessions = BrowserSessions(folder, lambda request: request.cancel())
     view = BrowserView(sessions, page_path.parent)
     view.page().accounting_path = page_path.resolve()
+    view.page().console_diagnostic = log
     if mode != 'seed':
         attach_accounting_bridge(view, folder / 'accounting-data')
     view.resize(1100, 720)
     view.show()
     submitted = False
+    last_result = None
     poll = QTimer()
     poll.setInterval(250)
 
     def inspect(result):
-        nonlocal submitted
-        if not isinstance(result, dict):
+        nonlocal submitted, last_result
+        # PySide's conversion of JS objects is not portable across Qt versions.
+        # Return a JSON string from Chromium and decode it explicitly.
+        if result != last_result:
+            log('DOM status: ' + repr(result))
+            last_result = result
+        try:
+            result = json.loads(result)
+            if not isinstance(result, dict):
+                raise ValueError('non-object status')
+        except (TypeError, ValueError):
             return
         ready, count = result.get('ready'), result.get('count')
         if ready == 'readonly':
@@ -96,6 +117,7 @@ def run_accounting_probe(mode, folder):
                 app.exit(10)
                 return
             submitted = True
+            log('submitting synthetic invoice via actual UI')
             view.page().runJavaScript("""
 (() => {
   document.querySelector('#btn-add-custom-item').click();
@@ -106,8 +128,9 @@ def run_accounting_probe(mode, folder):
   customer.value = 'CI-persistence-probe';
   customer.dispatchEvent(new Event('input', {bubbles: true}));
   document.querySelector('#btn-save-invoice').click();
+  return 'invoice click dispatched';
 })()
-""")
+""", lambda result: log('submit callback: ' + repr(result)))
             return
         try:
             data = LedgerSnapshot(folder / 'accounting-data').load()['data']
@@ -121,6 +144,7 @@ def run_accounting_probe(mode, folder):
                 app.exit(11)
                 return
         except Exception:
+            log(traceback.format_exc())
             app.exit(9)
             return
         poll.stop()
@@ -149,7 +173,12 @@ def run_accounting_probe(mode, folder):
         view.page().runJavaScript(script, seeded)
 
     poll.timeout.connect(lambda: view.page().runJavaScript(
-        "({ready:document.documentElement.dataset.ledgerReady || '',count:Number(document.querySelector('#header-history-count').textContent)})", inspect))
+        """JSON.stringify({ready:document.documentElement.dataset.ledgerReady || '',
+        count:Number(document.querySelector('#header-history-count')?.textContent),
+        banner:document.querySelector('#storage-banner')?.textContent || '',
+        toast:document.querySelector('#toast-container')?.textContent || '',
+        channel:typeof QWebChannel, transport:typeof qt,
+        inert:document.body?.inert, date:document.querySelector('#inv-date')?.value})""", inspect))
     if mode == 'seed':
         view.loadFinished.connect(seed_loaded)
     else:
@@ -157,6 +186,7 @@ def run_accounting_probe(mode, folder):
     QTimer.singleShot(60000, lambda: app.exit(7))
     view.open_local(str(page_path))
     code = app.exec()
+    log('probe exit: ' + str(code))
     poll.stop()
     view.close()
     view.deleteLater()

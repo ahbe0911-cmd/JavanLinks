@@ -37,9 +37,14 @@ try {
         $probeProcess = Start-Process -FilePath $exe -ArgumentList @("--accounting-probe-$mode", ('"' + $probe + '"')) -PassThru
         if (-not $probeProcess.WaitForExit(180000)) {
             & taskkill /PID $probeProcess.Id /T /F
+            $probeLog = Join-Path $probe "probe-$mode.log"
+            if (Test-Path $probeLog) { Get-Content -LiteralPath $probeLog -Encoding utf8 }
             throw "Accounting persistence probe $mode timed out."
         }
+        $probeLog = Join-Path $probe "probe-$mode.log"
+        if (Test-Path $probeLog) { Get-Content -LiteralPath $probeLog -Encoding utf8 }
         if ($probeProcess.ExitCode -ne 0) { throw "Accounting persistence probe $mode failed: $($probeProcess.ExitCode)" }
+        Write-Host "Accounting probe $mode passed."
     }
 } finally {
     if (Test-Path $probe) { Remove-Item -Path $probe -Recurse -Force -ErrorAction SilentlyContinue }

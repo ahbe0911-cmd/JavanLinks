@@ -3743,7 +3743,13 @@
         document.documentElement.dataset.ledgerReady = storageLocked ? 'readonly' : 'ready';
       }
 
-      document.addEventListener('DOMContentLoaded', init);
+      document.addEventListener('DOMContentLoaded', () => {
+        init().catch(error => {
+          document.body.inert = false;
+          lockStorage('راه‌اندازی حسابداری ناموفق بود؛ هیچ داده‌ای را تغییر ندهید.');
+          console.error('Accounting initialization failed:', error);
+        });
+      });
     })();
   </script>
 </body>
