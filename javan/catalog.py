@@ -1,7 +1,8 @@
-"""Phase 1: immutable sample catalog, independent of Qt."""
+"""Validated link model and Persian search, independent of Qt."""
 from dataclasses import dataclass
 import unicodedata
 from urllib.parse import urlsplit
+from pathlib import Path, PureWindowsPath
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,13 +12,31 @@ class Link:
     url: str
     category: str
     description: str = ''
+    kind: str = 'web'
 
     def __post_init__(self):
-        parsed = urlsplit(self.url)
-        if not self.id.strip() or not self.title.strip() or not self.category.strip():
-            raise ValueError('Link id, title and category are required')
-        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
-            raise ValueError('Expected an HTTP(S) URL without credentials')
+        for field, limit in ((self.id, 128), (self.title, 200), (self.category, 120),
+                             (self.url, 8192), (self.description, 2000), (self.kind, 16)):
+            if not isinstance(field, str) or len(field) > limit or '\x00' in field:
+                raise ValueError('Invalid link field')
+        if not all(value.strip() for value in (self.id, self.title, self.category, self.url)):
+            raise ValueError('Link id, title, category and address are required')
+        if self.kind == 'web':
+            if any(ch.isspace() or ord(ch) < 32 for ch in self.url) or '\\' in self.url:
+                raise ValueError('Invalid URL characters')
+            parsed = urlsplit(self.url)
+            if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError('Expected an HTTP(S) URL without credentials')
+            _ = parsed.port
+        elif self.kind == 'html':
+            path = Path(self.url)
+            win = PureWindowsPath(self.url)
+            if not (path.is_absolute() or win.is_absolute()) or self.url.startswith(('\\\\', '//')):
+                raise ValueError('Expected an absolute local file path (not a network share)')
+            if path.suffix.lower() not in ('.html', '.htm'):
+                raise ValueError('Expected an HTML file')
+        else:
+            raise ValueError('Unknown link kind')
 
 
 SAMPLE_LINKS = (

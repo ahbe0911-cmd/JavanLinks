@@ -1,5 +1,8 @@
 """Manual/on-device GUI smoke test. Requires Qt WebEngine and a graphical session."""
 import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from javan.storage import CatalogStore
 from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtWidgets import QApplication
 from javan.theme import STYLE, configure_font
@@ -11,7 +14,8 @@ def main():
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     configure_font(app)
     app.setStyleSheet(STYLE)
-    window = MainWindow()
+    temp = TemporaryDirectory()
+    window = MainWindow(CatalogStore(Path(temp.name) / 'catalog.json'))
     window.show()
     result = {'success': False}
 

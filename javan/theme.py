@@ -53,3 +53,15 @@ QScrollBar::handle:vertical { min-height: 30px; background: #567087; border-radi
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QToolTip { color: #18283b; background: #ffffff; border: 1px solid #cbd5e1; padding: 5px; }
 '''
+
+STYLE += '''
+QPushButton#manageButton { background: #176c70; color: white; border: 1px solid #238d87; border-radius: 9px; padding: 11px 6px; font-weight: 600; }
+QPushButton#manageButton:hover { background: #208782; }
+QDialog { background: #f8fafc; color: #18283b; }
+QDialog QLineEdit, QDialog QComboBox { background: white; color: #18283b; border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px; }
+QDialog QPushButton { background: #e6f1f0; color: #164e50; border: 1px solid #b5d5d2; border-radius: 7px; padding: 8px 12px; }
+QDialog QPushButton:hover { background: #cde8e4; }
+QLabel#managerHeading { font-weight: 700; font-size: 16px; color: #14263c; padding: 8px 0; }
+QTableWidget { background: white; alternate-background-color: #f1f5f9; color: #18283b; gridline-color: #e2e8f0; selection-background-color: #176c70; selection-color: white; }
+QHeaderView::section { background: #e2e8f0; color: #18283b; padding: 8px; border: none; font-weight: 600; }
+'''

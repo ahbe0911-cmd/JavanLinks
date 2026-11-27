@@ -1,4 +1,6 @@
 from urllib.parse import urlsplit, urlunsplit
+from pathlib import Path
+from PySide6.QtCore import QStandardPaths
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow,
                                QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
@@ -6,6 +8,8 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow,
 from .browser import BrowserView
 from .catalog import Link, SAMPLE_LINKS
 from .sidebar import Sidebar
+from .storage import CatalogStore
+from .manager import ManagerDialog, warn, ask
 
 
 def label(text: str, name: str) -> QLabel:
@@ -16,8 +20,9 @@ def label(text: str, name: str) -> QLabel:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, store=None):
         super().__init__()
+        self.store = store if store is not None else CatalogStore(Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / 'catalog.json')
         self.setWindowTitle('لینک‌های کاربردی کافینت جوان')
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setMinimumSize(800, 520)
@@ -31,7 +36,7 @@ class MainWindow(QMainWindow):
         outer = QHBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        self.sidebar = Sidebar(SAMPLE_LINKS)
+        self.sidebar = Sidebar(self.store.state.links)
         outer.addWidget(self.sidebar)
         workspace = QWidget()
         workspace_layout = QVBoxLayout(workspace)
@@ -73,7 +78,7 @@ class MainWindow(QMainWindow):
         self.progress.setFixedHeight(4)
         self.progress.hide()
         browser_layout.addWidget(self.progress)
-        self.browser = BrowserView()
+        self.browser = BrowserView(local_data=self.store.path.parent)
         self.browser.setAccessibleName('مرورگر داخلی')
         # UI chrome is RTL, but the websites control their own document direction.
         self.browser.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
@@ -95,6 +100,7 @@ class MainWindow(QMainWindow):
         workspace_layout.addWidget(status_card)
 
         self.sidebar.link_selected.connect(self.open_link)
+        self.sidebar.manage_requested.connect(self.manage_links)
         self.menu_button.clicked.connect(self.toggle_sidebar)
         self.home_button.clicked.connect(self.show_home)
         self.browser.loadStarted.connect(self._load_started)
@@ -103,11 +109,29 @@ class MainWindow(QMainWindow):
         self.browser.urlChanged.connect(self._url_changed)
         self.browser.status_message.connect(self.status.setText)
         self.show_home()
+        self._apply_sidebar()
+
+    def _apply_sidebar(self):
+        collapsed = self.store.state.sidebar_collapsed
+        self.sidebar.setVisible(not collapsed)
+        self.menu_button.setText('نمایش منو' if collapsed else 'جمع کردن منو')
+
+    def manage_links(self):
+        dialog = ManagerDialog(self.store, self)
+        dialog.changed.connect(self.catalog_changed)
+        dialog.exec()
+
+    def catalog_changed(self):
+        self.sidebar.set_links(self.store.state.links)
+        self._apply_sidebar()
 
     def toggle_sidebar(self):
-        visible = not self.sidebar.isHidden()
-        self.sidebar.setVisible(not visible)
-        self.menu_button.setText('نمایش منو' if visible else 'جمع کردن منو')
+        try:
+            self.store.set_sidebar(not self.store.state.sidebar_collapsed)
+        except (OSError, ValueError) as exc:
+            warn(self, 'ذخیره تنظیمات ناموفق بود.\n' + str(exc))
+            return
+        self._apply_sidebar()
         self.menu_button.setToolTip(self.menu_button.text())
 
     def show_home(self):
@@ -121,11 +145,26 @@ class MainWindow(QMainWindow):
         self.browser.show_home()
 
     def open_link(self, link: Link):
+        if link.kind == 'html':
+            if not Path(link.url).is_file():
+                warn(self, 'فایل HTML در مسیر ذخیره‌شده پیدا نشد. از مدیریت لینک‌ها مسیر را اصلاح کنید.')
+                self.sidebar.clear_active()
+                return
+            if not ask(self, 'فقط فایل HTML مورد اعتماد را اجرا کنید. این ابزار به فایل‌های پوشه خودش دسترسی دارد و نباید کنار اطلاعات حساس باشد. ادامه می‌دهید؟'):
+                self.sidebar.clear_active()
+                return
         self._home = False
         self._name = link.title
         self.page_title.setText(link.title)
         self.page_title.setToolTip(link.title)
-        self.browser.navigate(link.url)
+        if link.kind == 'html':
+            try:
+                self.browser.open_local(link.url)
+            except (ValueError, OSError, RuntimeError) as exc:
+                warn(self, str(exc))
+                self.show_home()
+        else:
+            self.browser.navigate(link.url)
 
     def _load_started(self):
         self._loading = True
@@ -146,6 +185,11 @@ class MainWindow(QMainWindow):
         if self._home and url.scheme() in ('data', 'about'):
             self.address.setText('صفحه داخلی')
             self.address.setToolTip('')
+            return
+        if url.isLocalFile():
+            self._home = False
+            self.address.setText('HTML محلی | ' + url.toLocalFile())
+            self.address.setToolTip(url.toLocalFile())
             return
         if url.scheme() in ('http', 'https'):
             # Suppress query/fragment in the status display (may contain tokens).

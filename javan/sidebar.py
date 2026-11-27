@@ -1,12 +1,13 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
-from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QPushButton
 
 from .catalog import Link, filter_links, group_links
 
 
 class Sidebar(QFrame):
     link_selected = Signal(object)
+    manage_requested = Signal()
 
     def __init__(self, links: tuple[Link, ...], parent=None):
         super().__init__(parent)
@@ -61,6 +62,10 @@ class Sidebar(QFrame):
         self.count = QLabel()
         self.count.setObjectName('sidebarHint')
         layout.addWidget(self.count)
+        manage = QPushButton('＋ مدیریت لینک‌ها و پشتیبان‌گیری')
+        manage.setObjectName('manageButton')
+        manage.clicked.connect(self.manage_requested.emit)
+        layout.addWidget(manage)
         self.search.textChanged.connect(self._refresh)
         self.tree.itemClicked.connect(self._activate)
         # Double-click may also emit itemActivated on some platforms. Use only
@@ -80,7 +85,7 @@ class Sidebar(QFrame):
             group.setForeground(0, QBrush(QColor('#9dc4d9')))
             self.tree.addTopLevelItem(group)
             for link in entries:
-                item = QTreeWidgetItem([link.title])
+                item = QTreeWidgetItem([('HTML · ' if link.kind == 'html' else '') + link.title])
                 item.setData(0, Qt.ItemDataRole.UserRole, link.id)
                 item.setToolTip(0, f'{link.title}\n{link.url}')
                 group.addChild(item)
@@ -89,7 +94,7 @@ class Sidebar(QFrame):
             group.setExpanded(True)
         self.tree.setVisible(bool(matches))
         self.empty.setVisible(not matches)
-        self.count.setText(f'{len(matches)} لینک از {len(self._links)} لینک نمونه')
+        self.count.setText(f'{len(matches)} لینک از {len(self._links)} لینک')
 
     def _activate(self, item, _column):
         link_id = item.data(0, Qt.ItemDataRole.UserRole)
@@ -101,6 +106,12 @@ class Sidebar(QFrame):
 
     def _keyboard_activate(self, item, column):
         self._activate(item, column)
+
+    def set_links(self, links):
+        self._links = tuple(links)
+        self._lookup = {link.id: link for link in links}
+        self._active_id = None
+        self._refresh(self.search.text())
 
     def clear_active(self):
         self._active_id = None
