@@ -1,4 +1,6 @@
 from pathlib import Path
+from time import time_ns
+from zipfile import BadZipFile
 from PySide6.QtCore import Qt, QStandardPaths
 from PySide6.QtGui import QKeySequence, QShortcut, QPageLayout, QPageSize
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
@@ -12,6 +14,7 @@ from .sidebar import Sidebar
 from .storage import CatalogStore, atomic_write
 from .manager import ManagerDialog, warn, ask
 from .downloads import DownloadManager
+from .accounting import prepare_accounting, import_fonts
 
 
 def label(text, name):
@@ -54,6 +57,10 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(top)
         row.setContentsMargins(8, 7, 8, 7)
         self.menu_button = self.button(row, 'منو', 'جمع یا باز کردن منو', self.toggle_sidebar)
+        self.accounting_button = self.button(row, 'حسابداری', 'حسابداری، فاکتور و دفتر نسیه (Ctrl+Shift+A)', self.open_accounting)
+        self.accounting_button.setObjectName('accountingButton')
+        self.accounting_button.setCheckable(True)
+        self.font_button = self.button(row, 'فونت‌ها', 'وارد کردن فونت‌های حسابداری از فایل ZIP یا TTF', self.choose_accounting_fonts)
         self.page_title = label('صفحه اصلی', 'pageTitle')
         self.page_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self.page_title, 1)
@@ -123,6 +130,7 @@ class MainWindow(QMainWindow):
                             ('Ctrl+L', self.focus_address), ('Ctrl+R', self.reload_or_stop), ('F5', self.reload_or_stop),
                             ('Alt+Left', lambda: self.current().back()), ('Alt+Right', lambda: self.current().forward()),
                             ('Ctrl+P', self.print_page), ('Ctrl+J', self.show_downloads),
+                            ('Ctrl+Shift+A', self.open_accounting),
                             ('Ctrl+=', lambda: self.zoom(1)), ('Ctrl+-', lambda: self.zoom(-1)),
                             ('Ctrl+0', lambda: self.zoom(0)), ('Ctrl+Tab', self.next_tab)]:
             shortcut = QShortcut(QKeySequence(seq), self)
@@ -130,6 +138,48 @@ class MainWindow(QMainWindow):
             self.shortcuts.append(shortcut)
         self.new_home()
         self._apply_sidebar()
+
+    def accounting_view(self):
+        for i in range(self.tabs.count()):
+            v = self.tabs.widget(i)
+            if getattr(v, 'is_accounting', False):
+                return v
+        return None
+
+    def open_accounting(self):
+        view = self.accounting_view()
+        if view is not None:
+            self.tabs.setCurrentWidget(view)
+            self.accounting_button.setChecked(True)
+            return
+        try:
+            path = prepare_accounting(self.store.path.parent)
+            view = self.make_tab(path.parent, 'حسابداری')
+            if view is None:
+                self.accounting_button.setChecked(False)
+                return
+            view.is_accounting = True
+            view.open_local(str(path))
+            self.sync()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.accounting_button.setChecked(False)
+            warn(self, 'باز کردن حسابداری ناموفق بود.\n' + str(exc))
+
+    def choose_accounting_fonts(self):
+        names, _ = QFileDialog.getOpenFileNames(self, 'انتخاب فایل‌های فونت ارسالی', '', 'فونت و آرشیو (*.zip *.ttf)')
+        if not names:
+            return
+        try:
+            imported = import_fonts(self.store.path.parent, names)
+        except (OSError, ValueError, RuntimeError, BadZipFile) as exc:
+            warn(self, 'وارد کردن فونت ناموفق بود.\n' + str(exc))
+            return
+        view = self.accounting_view()
+        if view is not None:
+            # Refresh the stylesheet only; don't reload an unsaved invoice.
+            stamp = time_ns()
+            view.page().runJavaScript("(()=>{const e=document.querySelector('link[href^=\"fonts/accounting.css\"]');if(e)e.href='fonts/accounting.css?v=" + str(stamp) + "';})()")
+        self.status.setText(f'{len(imported)} فونت محلی وارد شد.')
 
     @staticmethod
     def button(layout, text, hint, callback):
@@ -192,6 +242,8 @@ class MainWindow(QMainWindow):
         if view in self.print_jobs:
             warn(self, 'تا پایان چاپ یا ساخت PDF، این زبانه را نبندید.')
             return
+        if getattr(view, 'is_accounting', False) and not ask(self, 'حسابداری بسته شود؟ اطلاعات ثبت‌شده حفظ می‌شود، اما فاکتور ثبت‌نشده ممکن است از دست برود.'):
+            return
         view.stop()
         self.tabs.removeTab(index)
         view.deleteLater()
@@ -238,6 +290,9 @@ class MainWindow(QMainWindow):
             self.close_tab(self.tabs.indexOf(v))
 
     def popup(self, source, request):
+        if getattr(source, 'is_accounting', False):
+            self.message(source, 'حسابداری در یک زبانه اختصاصی اجرا می‌شود.')
+            return
         if not request.isUserInitiated():
             self.message(source, 'پنجره خودکار مسدود شد.')
             return
@@ -297,8 +352,10 @@ class MainWindow(QMainWindow):
         self.message(v, 'در حال بارگذاری…')
 
     def loading(self, v, n):
+        # Update only the progress widget, not every toolbar control, for background load events.
         v.progress_value = n
-        self.sync_if(v)
+        if self.current() is v and self.progress.value() != n:
+            self.progress.setValue(n)
 
     def finished(self, v, ok):
         v.loading = False
@@ -307,7 +364,7 @@ class MainWindow(QMainWindow):
     def title_changed(self, v, title):
         index = self.tabs.indexOf(v)
         if index >= 0:
-            name = 'صفحه اصلی' if v.home else (title or 'زبانه جدید')
+            name = 'حسابداری' if getattr(v, 'is_accounting', False) else ('صفحه اصلی' if v.home else (title or 'زبانه جدید'))
             self.tabs.setTabText(index, name[:50])
             self.tabs.setTabToolTip(index, name)
         self.sync_if(v)
@@ -324,10 +381,12 @@ class MainWindow(QMainWindow):
         v = self.current()
         if v is None:
             return
+        accounting = getattr(v, 'is_accounting', False)
+        self.accounting_button.setChecked(accounting)
         url = v.url()
         if url.scheme() in ('http', 'https'):
             v.home = False
-        self.page_title.setText('صفحه اصلی' if v.home else (v.title() or self.tabs.tabText(self.tabs.currentIndex())))
+        self.page_title.setText('حسابداری و صدور فاکتور' if accounting else ('صفحه اصلی' if v.home else (v.title() or self.tabs.tabText(self.tabs.currentIndex()))))
         self.status.setText(v.last_status)
         self.progress.setVisible(v.loading)
         self.progress.setValue(v.progress_value)
@@ -439,6 +498,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.print_jobs:
             warn(self, 'ابتدا منتظر پایان چاپ یا ساخت PDF بمانید.')
+            event.ignore()
+            return
+        if self.accounting_view() is not None and not ask(self, 'برنامه بسته شود؟ فاکتورهای ثبت‌شده محفوظ هستند؛ ابتدا فاکتور در حال ویرایش را ثبت کنید.'):
             event.ignore()
             return
         if self.downloads.active_count() and not ask(self, 'دانلود فعال وجود دارد. دانلودها لغو و برنامه بسته شود؟'):

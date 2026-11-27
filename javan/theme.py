@@ -77,3 +77,10 @@ QTabBar::tab { background: #e0e7ef; color: #40546a; padding: 9px 12px; min-width
 QTabBar::tab:selected { background: white; color: #176c70; font-weight: 700; }
 QTabBar::tab:hover { background: #e3f3ef; }
 '''
+
+STYLE += '''
+QPushButton#accountingButton { background: #059669; color: #fff; border: 1px solid #047857; border-radius: 8px; padding: 8px 16px; font-weight: 700; }
+QPushButton#accountingButton:hover { background: #047857; }
+QPushButton#accountingButton:checked { background: #065f46; border: 1px solid #34d399; }
+QPushButton#accountingButton:focus { border: 2px solid #6ee7b7; }
+'''

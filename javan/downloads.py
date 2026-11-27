@@ -1,6 +1,6 @@
 """Session-scoped download manager. Never opens downloaded files automatically."""
 from pathlib import Path
-from PySide6.QtCore import Qt, QStandardPaths, Signal
+from PySide6.QtCore import Qt, QStandardPaths, Signal, QTimer
 from PySide6.QtWebEngineCore import QWebEngineDownloadRequest
 from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QAbstractItemView, QHeaderView)
@@ -18,6 +18,10 @@ class DownloadManager(QDialog):
         self.setWindowTitle('مدیریت دانلودها')
         self.resize(820, 420)
         self.records = []
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setSingleShot(True)
+        self.refresh_timer.setInterval(120)
+        self.refresh_timer.timeout.connect(self.refresh)
         layout = QVBoxLayout(self)
         self.summary = QLabel('دانلودهای این نشست')
         layout.addWidget(self.summary)
@@ -81,15 +85,16 @@ class DownloadManager(QDialog):
         rec['finished'] = r.isFinished()
         if state == D.DownloadCompleted:
             rec['progress'] = '۱۰۰٪'
-        self.refresh()
+        if not self.refresh_timer.isActive():
+            self.refresh_timer.start()
 
     def request_destroyed(self, rec):
         rec['request'] = None
         if not rec['finished']:
             rec['status'] = 'پایان یافت'
             rec['finished'] = True
-        if rec in self.records:
-            self.refresh()
+        if rec in self.records and not self.refresh_timer.isActive():
+            self.refresh_timer.start()
 
     def refresh(self):
         row = self.table.currentRow()
