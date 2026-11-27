@@ -152,7 +152,7 @@ class LedgerSnapshot:
 
     def _backup(self, revision, payload, prefix):
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-        path = self.backups / f'{prefix}-{stamp}-r{revision}-{uuid4().hex[:8]}.json'
+        path = self.backups / (f'snapshot-r{revision:012d}.json' if prefix == 'snapshot' else f'{prefix}-{stamp}-r{revision}-{uuid4().hex[:8]}.json')
         data = {'app': 'JavanCafeNetAccounting', 'version': 3, 'revision': revision,
                 'exportedAt': stamp, 'data': parse_json(payload)}
         atomic_write(path, encode_json(data).encode('utf-8'))
@@ -160,7 +160,7 @@ class LedgerSnapshot:
 
     def _prune(self):
         # Legacy archives and pre-restore backups are never automatically removed.
-        files = sorted(self.backups.glob('snapshot-*.json'), reverse=True)
+        files = sorted(self.backups.glob('snapshot-r*.json'), reverse=True)
         for path in files[30:]:
             try:
                 path.unlink()

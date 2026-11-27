@@ -19,7 +19,7 @@ main{max-width:920px;margin:0 auto;padding:clamp(22px,5vw,62px)}
 h2{font-size:17px;margin:32px 0 14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
 article{background:#fff;border:1px solid #e0e7ef;border-radius:14px;padding:18px;min-height:130px} article b{display:block;margin:8px 0 4px} article p{font-size:12px;color:#607387}
 .num{font-size:12px;background:#e3f3ef;color:#186761;border-radius:8px;padding:3px 10px;display:inline-block} .foot{font-size:12px;color:#607387;margin-top:24px}
-</style></head><body><main><div class="hero"><div class="eyebrow">میز کار دیجیتال &nbsp; / &nbsp; نسخه ۰.۵</div><h1>لینک‌های کاربردی کافینت جوان</h1><p>سامانه موردنظر خود را از منوی سمت راست انتخاب کنید تا در همین محیط باز شود.</p></div>
+</style></head><body><main><div class="hero"><div class="eyebrow">میز کار دیجیتال &nbsp; / &nbsp; نسخه ۰.۶ (آزمایشی)</div><h1>لینک‌های کاربردی کافینت جوان</h1><p>سامانه موردنظر خود را از منوی سمت راست انتخاب کنید تا در همین محیط باز شود.</p></div>
 <h2>دسترسی به خدمات</h2><div class="grid"><article><span class="num">۰۱</span><b>خدمات دولتی</b><p>دسترسی به درگاه‌های عمومی و مالیاتی</p></article><article><span class="num">۰۲</span><b>بانکی و چک</b><p>اطلاعات و سامانه‌های بانکی</p></article><article><span class="num">۰۳</span><b>آموزشی</b><p>آزمون‌ها و ثبت‌نام‌های آموزشی</p></article><article><span class="num">۰۴</span><b>خدمات پستی</b><p>پیگیری و خدمات مرسولات</p></article></div>
 <p class="foot">برای یافتن سریع‌تر یک سامانه، نام آن را در کادر جستجوی منو بنویسید.</p></main></body></html>'''
 
@@ -40,7 +40,7 @@ class LocalPolicy(QWebEngineUrlRequestInterceptor):
         self.root = Path(root).resolve()
 
     def allows(self, url):
-        if url.toString() == 'qrc:///qtwebchannel/qwebchannel.js' and self.root.name == 'accounting':
+        if url.scheme() == 'qrc' and url.path() == '/qtwebchannel/qwebchannel.js' and not url.host() and self.root.name == 'accounting':
             return True
         if url.scheme().lower() in ('data', 'blob', 'about'):
             return True
@@ -172,7 +172,7 @@ class BrowserView(QWebEngineView):
         settings.setAttribute(A.LocalContentCanAccessFileUrls, self.root is not None)
         settings.setAttribute(A.LocalStorageEnabled, True)
         settings.setAttribute(A.JavascriptCanOpenWindows, self.root is None)
-        settings.setAttribute(A.PluginsEnabled, False)
+        settings.setAttribute(A.PluginsEnabled, True)
         settings.setAttribute(A.PdfViewerEnabled, True)
         page.navigation_blocked.connect(lambda scheme: self.status_message.emit('دسترسی به این آدرس مسدود است: ' + scheme))
         page.newWindowRequested.connect(lambda request: self.popup_requested.emit(self, request))

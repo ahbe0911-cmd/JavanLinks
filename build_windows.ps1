@@ -20,6 +20,8 @@ Run-Python -c "import struct; assert struct.calcsize('P') == 8, '64-bit Python r
 Run-Python scripts/prepare_assets.py
 Run-Python -m compileall -q main.py javan tests scripts
 Run-Python -m unittest discover -s tests -v
+& node --test tests/test_accounting_js.cjs
+if ($LASTEXITCODE -ne 0) { throw "Accounting JavaScript tests failed" }
 Run-Python -m PyInstaller --noconfirm --clean --onefile --windowed --noupx --name JavanLinks --icon assets/javan.ico --version-file scripts/version_info.txt --add-data "assets;assets" main.py
 $exe = (Resolve-Path "dist\JavanLinks.exe").Path
 $process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru
@@ -31,7 +33,7 @@ if ($process.ExitCode -ne 0) { throw "Frozen WebEngine startup test failed: $($p
 # Verify actual accounting storage survives two independent frozen processes.
 $probe = Join-Path ([System.IO.Path]::GetTempPath()) ("JavanLinks-probe-" + [guid]::NewGuid().ToString("N"))
 try {
-    foreach ($mode in @("write", "read")) {
+    foreach ($mode in @("seed", "write", "read")) {
         $probeProcess = Start-Process -FilePath $exe -ArgumentList @("--accounting-probe-$mode", ('"' + $probe + '"')) -PassThru
         if (-not $probeProcess.WaitForExit(180000)) {
             & taskkill /PID $probeProcess.Id /T /F

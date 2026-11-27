@@ -88,3 +88,20 @@ class LedgerSnapshotTests(unittest.TestCase):
         data['invoices'][0]['finalToman'] = 1000.5
         self.ledger.save(0, encode_json(data))
         self.assertEqual(self.ledger.load()['data']['invoices'][0]['finalToman'], 1000.5)
+
+
+    def test_backup_retention_unique_revisions(self):
+        for revision in range(34):
+            self.ledger.save(revision, encode_json(sample()))
+        files = sorted((self.folder / 'backups').glob('snapshot-r*.json'))
+        self.assertEqual(len(files), 30)
+        self.assertTrue(files[-1].name.endswith('000000000034.json'))
+
+    def test_process_exit_after_commit(self):
+        import subprocess
+        import sys
+        code = ("import os,sys; from javan.ledger_snapshot import LedgerSnapshot;"
+                "LedgerSnapshot(sys.argv[1]).save(0, sys.argv[2]);os._exit(0)")
+        completed = subprocess.run([sys.executable, '-c', code, str(self.folder), encode_json(sample())], check=False)
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(self.ledger.load()['data'], sample())
