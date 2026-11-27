@@ -1,6 +1,7 @@
 """Debt linkage and payment rules; never infer historical debt matches by name."""
 from datetime import datetime, timezone
 from uuid import uuid4
+import re
 
 
 def remaining(debt):
@@ -34,7 +35,7 @@ def validate_debts(data, fail):
             if not isinstance(uid, str) or not uid or uid in payment_ids:
                 fail('شناسه پرداخت نامعتبر یا تکراری است.')
             payment_ids.add(uid)
-            if type(p.get('amount')) is not int or p['amount'] <= 0 or not isinstance(p.get('date'), str):
+            if type(p.get('amount')) is not int or p['amount'] <= 0 or not isinstance(p.get('date'), str) or not re.fullmatch(r'\d{4}/\d{2}/\d{2}', p['date']):
                 fail('مبلغ یا تاریخ پرداخت نامعتبر است.')
         balance = remaining(d)
         if balance < 0 or d['paid'] != (balance == 0):

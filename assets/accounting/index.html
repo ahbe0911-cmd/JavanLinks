@@ -2276,7 +2276,7 @@
       function nativeCall(method, ...args) {
         return new Promise((resolve, reject) => {
           if (!nativeLedger) { reject(new Error('ارتباط پایگاه در دسترس نیست.')); return; }
-          const timer = setTimeout(() => reject(new Error('پاسخ پایگاه نامشخص است؛ برنامه را دوباره باز کنید.')), 45000);
+          const timer = setTimeout(() => reject(new Error('پاسخ پایگاه نامشخص است؛ برنامه را دوباره باز کنید.')), method === 'save' ? 180000 : 45000);
           try {
             nativeLedger[method](...args, raw => {
               clearTimeout(timer);
@@ -2507,7 +2507,8 @@
             <td class="num-tabular" style="font-weight:800; color:${showPaid ? 'var(--emerald-600)' : 'var(--amber-600)'};">${formatNumber(showPaid ? d.amount : debtBalance(d))}${Array.isArray(d.payments) && d.payments.length ? `<div style="font-size:10px">اصل: ${formatNumber(d.amount)} | وصول: ${formatNumber(d.amount-debtBalance(d))}</div>` : ""}</td>
             <td class="num-tabular" style="color:var(--text-secondary);">${escapeHtml(showPaid ? (d.paidDate || '') : (d.date || ''))}</td>
             <td style="text-align:center;">
-              <div style="display:inline-flex; gap:5px;">
+              <div style="display:inline-flex; flex-wrap:wrap; gap:5px;">
+                ${Array.isArray(d.payments) && d.payments.length ? `<button type="button" class="btn btn-xs btn-outline" data-debt-act="payments" data-id="${escapeHtml(d.id)}">سوابق وصول</button>` : ''}
                 ${showPaid
                   ? `<button type="button" class="btn btn-xs btn-outline" data-debt-act="reopen" data-id="${escapeHtml(d.id)}">برگشت</button>`
                   : `<button type="button" class="btn btn-xs btn-emerald" data-debt-act="pay" data-id="${escapeHtml(d.id)}">تسویه ✓</button><button type="button" class="btn btn-xs btn-outline" data-debt-act="partial" data-id="${escapeHtml(d.id)}">پرداخت جزئی</button>`}
@@ -2577,6 +2578,11 @@
           if (!d) return;
           const act = btn.dataset.debtAct;
 
+          if (act === 'payments') {
+            const rows = (d.payments || []).map((p,i) => (i+1)+'. '+p.date+' — '+formatNumber(p.amount)+' تومان');
+            window.alert('سوابق وصول '+d.name+'\n'+rows.join('\n')+'\nمانده: '+formatNumber(debtBalance(d))+' تومان');
+            return;
+          }
           if (act === 'pay' || act === 'partial') {
             const balance = debtBalance(d);
             let amount = balance;
@@ -2585,8 +2591,12 @@
               if (input === null) return;
               amount = parseAmount(input);
             }
-            if (!addDebtPayment(d, amount, getTodayJalali())) {
-              showToast('مبلغ معتبر و حداکثر برابر مانده بدهی وارد کنید. بدهی اعشاری قدیمی نیاز به بررسی دارد.', 'error'); return;
+            if (act === 'pay' && !d.invoiceId && !Array.isArray(d.payments) && !Number.isSafeInteger(d.amount) && !d.paid) {
+              // Preserve legacy fractional principal exactly; manager authorizes full settlement.
+              d.paid = true;
+              d.paidDate = getTodayJalali();
+            } else if (!addDebtPayment(d, amount, getTodayJalali())) {
+              showToast('مبلغ معتبر و حداکثر برابر مانده بدهی وارد کنید.', 'error'); return;
             }
             if (!await saveDebts()) return;
             renderDebtsModal();
@@ -2963,13 +2973,14 @@
         let todayCount = 0;
         let totalSales = 0;
         let creditTotal = 0;
+        const linkedIds = new Set(state.debts.filter(d=>d.invoiceId).map(d=>d.invoiceId));
 
         for (let i = 0; i < state.invoices.length; i++) {
           const inv = state.invoices[i];
           const amount = Number(inv.finalToman) || 0;
           const isCredit = inv.paymentStatus === 'نسیه';
           totalSales += amount;
-          if (isCredit && !state.debts.some(d => d.invoiceId === inv.id)) creditTotal += amount;
+          if (isCredit && !linkedIds.has(inv.id)) creditTotal += amount;
           if (inv.date === today) {
             todayCount++;
             if (!isCredit) todaySales += amount;

@@ -30,7 +30,7 @@ function harness(legacy = {}, overrides = {}) {
       setItem(){throw Error('legacy must not be overwritten');},removeItem(){throw Error('legacy must not be removed');}},
     setTimeout(){return 1;}, clearTimeout(){}
   });
-  const instrumented = script.replace(/\}\)\(\);\s*$/, 'globalThis.api = {state, KEYS, loadStorage, persist, snapshot, computeTotals, isValidJalaliDate, gregorianToJalali, safeRows, safeLogo, safeCounter, numberToPersianWords}; })();');
+  const instrumented = script.replace(/\}\)\(\);\s*$/, 'globalThis.api = {state, KEYS, loadStorage, persist, snapshot, computeTotals, isValidJalaliDate, gregorianToJalali, safeRows, safeLogo, safeCounter, numberToPersianWords, debtBalance, addDebtPayment}; })();');
   assert.notEqual(script, instrumented);
   vm.runInContext(instrumented, context, {filename:'accounting-inline.js'});
   return {api:context.api, elements, archived, saves, notices};
@@ -102,4 +102,27 @@ test('unsafe logo and malformed import records rejected', () => {
 test('new invoice counter reconciles historical maximum',()=>{
   const {api}=harness();
   assert.equal(api.safeCounter(1001,[{invoiceNumber:'2000'}]),2001);
+});
+
+
+test('partial payment keeps principal and rejects excess; final payment settles', () => {
+  const {api}=harness();
+  const d={id:'d',amount:1000,paid:false,paidDate:null};
+  assert.equal(api.addDebtPayment(d,300,'1405/09/06'),true);
+  assert.equal(api.debtBalance(d),700);
+  assert.equal(d.amount,1000);
+  assert.equal(d.paid,false);
+  assert.equal(api.addDebtPayment(d,701,'1405/09/06'),false);
+  assert.equal(api.addDebtPayment(d,700,'1405/09/06'),true);
+  assert.equal(api.debtBalance(d),0);
+  assert.equal(d.paid,true);
+  assert.equal(d.payments.length,2);
+});
+
+test('legacy settled debt retains balance without fabricated payments', () => {
+  const {api}=harness();
+  const d={amount:1000,paid:true};
+  assert.equal(api.debtBalance(d),0);
+  assert.equal(api.addDebtPayment(d,1,'1405/09/06'),false);
+  assert.equal(d.payments,undefined);
 });
