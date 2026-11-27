@@ -37,6 +37,14 @@ def main():
             window.toggle_sidebar()
             assert not window.sidebar.isHidden()
             assert window.sidebar.mapTo(window, QPoint(0, 0)).x() > window.browser.mapTo(window, QPoint(0, 0)).x()
+            first = window.browser
+            second = window.new_home()
+            assert window.tabs.count() == 2 and second is window.browser
+            window.zoom(1)
+            assert round(second.zoomFactor() * 100) == 110
+            assert round(first.zoomFactor() * 100) == 100
+            window.close_tab(window.tabs.indexOf(second))
+            assert window.tabs.count() == 1 and window.browser is first
             result['success'] = True
             print('GUI smoke passed: home, filter, empty state, collapse and RTL placement')
             app.exit(0)

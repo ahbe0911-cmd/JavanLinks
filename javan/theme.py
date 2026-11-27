@@ -65,3 +65,15 @@ QLabel#managerHeading { font-weight: 700; font-size: 16px; color: #14263c; paddi
 QTableWidget { background: white; alternate-background-color: #f1f5f9; color: #18283b; gridline-color: #e2e8f0; selection-background-color: #176c70; selection-color: white; }
 QHeaderView::section { background: #e2e8f0; color: #18283b; padding: 8px; border: none; font-weight: 600; }
 '''
+
+STYLE += '''
+QPushButton#browserAction { background: #f1f5f9; color: #203851; border: 1px solid #dce4ed; border-radius: 7px; padding: 6px 8px; }
+QPushButton#browserAction:hover { background: #dcefeb; border-color: #85bcb6; }
+QPushButton#browserAction:disabled { color: #a0aaba; background: #f5f7fa; }
+QLineEdit#addressBar { background: white; color: #18283b; border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px; }
+QLineEdit#addressBar:focus { border: 1px solid #176c70; }
+QTabWidget#browserTabs::pane { border: 1px solid #dce4ed; background: white; }
+QTabBar::tab { background: #e0e7ef; color: #40546a; padding: 9px 12px; min-width: 100px; max-width: 220px; margin: 1px; border-radius: 6px; }
+QTabBar::tab:selected { background: white; color: #176c70; font-weight: 700; }
+QTabBar::tab:hover { background: #e3f3ef; }
+'''

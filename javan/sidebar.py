@@ -99,8 +99,6 @@ class Sidebar(QFrame):
     def _activate(self, item, _column):
         link_id = item.data(0, Qt.ItemDataRole.UserRole)
         if link_id in self._lookup:
-            if link_id == self._active_id:
-                return
             self._active_id = link_id
             self.link_selected.emit(self._lookup[link_id])
 

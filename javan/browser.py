@@ -1,5 +1,7 @@
-"""A single WebEngine view; the browser controller can be reused for tabs later."""
+"""Shared web session and isolated local profiles for tabbed browsing."""
 from pathlib import Path
+from hashlib import sha256
+from PySide6.QtCore import QObject
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineUrlRequestInterceptor
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -15,7 +17,7 @@ main{max-width:920px;margin:0 auto;padding:clamp(22px,5vw,62px)}
 h2{font-size:17px;margin:32px 0 14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
 article{background:#fff;border:1px solid #e0e7ef;border-radius:14px;padding:18px;min-height:130px} article b{display:block;margin:8px 0 4px} article p{font-size:12px;color:#607387}
 .num{font-size:12px;background:#e3f3ef;color:#186761;border-radius:8px;padding:3px 10px;display:inline-block} .foot{font-size:12px;color:#607387;margin-top:24px}
-</style></head><body><main><div class="hero"><div class="eyebrow">میز کار دیجیتال &nbsp; / &nbsp; نسخه ۰.۲</div><h1>لینک‌های کاربردی کافینت جوان</h1><p>سامانه موردنظر خود را از منوی سمت راست انتخاب کنید تا در همین محیط باز شود.</p></div>
+</style></head><body><main><div class="hero"><div class="eyebrow">میز کار دیجیتال &nbsp; / &nbsp; نسخه ۰.۳</div><h1>لینک‌های کاربردی کافینت جوان</h1><p>سامانه موردنظر خود را از منوی سمت راست انتخاب کنید تا در همین محیط باز شود.</p></div>
 <h2>دسترسی به خدمات</h2><div class="grid"><article><span class="num">۰۱</span><b>خدمات دولتی</b><p>دسترسی به درگاه‌های عمومی و مالیاتی</p></article><article><span class="num">۰۲</span><b>بانکی و چک</b><p>اطلاعات و سامانه‌های بانکی</p></article><article><span class="num">۰۳</span><b>آموزشی</b><p>آزمون‌ها و ثبت‌نام‌های آموزشی</p></article><article><span class="num">۰۴</span><b>خدمات پستی</b><p>پیگیری و خدمات مرسولات</p></article></div>
 <p class="foot">برای یافتن سریع‌تر یک سامانه، نام آن را در کادر جستجوی منو بنویسید.</p></main></body></html>'''
 
@@ -24,24 +26,21 @@ class BrowserPage(QWebEnginePage):
     navigation_blocked = Signal(str)
 
     def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
-        # Phase 1 only allows ordinary web navigation and its own HTML landing page.
-        # Local document trust rules will be handled separately in phase 2.
-        if is_main_frame and url.scheme().lower() not in ('http', 'https', 'about', 'data', 'blob'):
+        if url.scheme().lower() not in ('http', 'https', 'about', 'data', 'blob'):
             self.navigation_blocked.emit(url.scheme())
             return False
         return super().acceptNavigationRequest(url, navigation_type, is_main_frame)
 
 
 class LocalPolicy(QWebEngineUrlRequestInterceptor):
-    """Local tools are isolated from web sessions and restricted to their folder."""
-    def __init__(self, parent=None):
+    def __init__(self, root, parent=None):
         super().__init__(parent)
-        self.root = None
+        self.root = Path(root).resolve()
 
     def allows(self, url):
         if url.scheme().lower() in ('data', 'blob', 'about'):
             return True
-        if url.isLocalFile() and not url.host() and self.root is not None:
+        if url.isLocalFile() and not url.host():
             try:
                 return Path(url.toLocalFile()).resolve().is_relative_to(self.root)
             except (OSError, ValueError, RuntimeError):
@@ -53,88 +52,90 @@ class LocalPolicy(QWebEngineUrlRequestInterceptor):
             info.block(True)
 
 
-class LocalPage(QWebEnginePage):
+class LocalPage(BrowserPage):
     def __init__(self, profile, policy, parent):
         super().__init__(profile, parent)
         self.policy = policy
 
     def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
-        return self.policy.allows(url)
+        allowed = self.policy.allows(url)
+        if not allowed:
+            self.navigation_blocked.emit(url.scheme())
+        return allowed
+
+
+class BrowserSessions(QObject):
+    """Profiles live for the application lifetime, longer than their pages."""
+    def __init__(self, folder, download_handler):
+        super().__init__(QApplication.instance())
+        self.folder = Path(folder)
+        self.download_handler = download_handler
+        self.web = QWebEngineProfile(self)
+        self.web.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+        self.web.downloadRequested.connect(download_handler)
+        self.local_profiles = {}
+
+    def local(self, root):
+        root = Path(root).resolve()
+        if root not in self.local_profiles:
+            key = sha256(str(root).encode('utf-8')).hexdigest()[:32]
+            profile = QWebEngineProfile('JavanLocal-' + key, self)
+            profile.setPersistentStoragePath(str(self.folder / 'local-profiles' / key / 'storage'))
+            profile.setCachePath(str(self.folder / 'local-profiles' / key / 'cache'))
+            profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+            policy = LocalPolicy(root, profile)
+            profile.setUrlRequestInterceptor(policy)
+            profile.downloadRequested.connect(self.download_handler)
+            self.local_profiles[root] = (profile, policy)
+        return self.local_profiles[root]
 
 
 class BrowserView(QWebEngineView):
     status_message = Signal(str)
+    popup_requested = Signal(object, object)
 
-    def __init__(self, parent=None, local_data=None):
+    def __init__(self, sessions, root=None, parent=None):
         super().__init__(parent)
-        self.local_data = local_data
-        self.local_profile = None
-        self.local_page = None
-        self.local_policy = None
-        # An unnamed profile is off-the-record; cookies remain available within
-        # the current process but aren't intentionally persisted across launches.
-        self.profile = QWebEngineProfile(QApplication.instance())
-        self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
-        self.browser_page = BrowserPage(self.profile, self)
-        self.setPage(self.browser_page)
-        settings = self.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False)
-        self.browser_page.navigation_blocked.connect(lambda scheme: self.status_message.emit(f'این نوع آدرس پشتیبانی نمی‌شود: {scheme}'))
-        self.profile.downloadRequested.connect(self._cancel_download)
-        self.browser_page.newWindowRequested.connect(self._popup_requested)
+        self.root = Path(root).resolve() if root is not None else None
+        self.home = False
+        self.link_id = None
+        self.loading = False
+        self.progress_value = 0
+        self.last_status = 'آماده'
+        if self.root is None:
+            page = BrowserPage(sessions.web, self)
+        else:
+            profile, policy = sessions.local(self.root)
+            page = LocalPage(profile, policy, self)
+        self.setPage(page)
+        settings = page.settings()
+        A = QWebEngineSettings.WebAttribute
+        settings.setAttribute(A.LocalContentCanAccessRemoteUrls, False)
+        settings.setAttribute(A.LocalContentCanAccessFileUrls, self.root is not None)
+        settings.setAttribute(A.LocalStorageEnabled, True)
+        settings.setAttribute(A.JavascriptCanOpenWindows, self.root is None)
+        settings.setAttribute(A.PluginsEnabled, True)
+        settings.setAttribute(A.PdfViewerEnabled, True)
+        page.navigation_blocked.connect(lambda scheme: self.status_message.emit('دسترسی به این آدرس مسدود است: ' + scheme))
+        page.newWindowRequested.connect(lambda request: self.popup_requested.emit(self, request))
 
-    def _cancel_download(self, request):
-        request.cancel()
-        self.status_message.emit('مدیریت دانلود در فاز سوم فعال خواهد شد.')
-
-    def _popup_requested(self, request):
-        # A single-view shell has no popup/tab container yet. Do not silently
-        # replace an authentication page or send anything to another browser.
-        self.status_message.emit('پنجره‌های جدید و تب‌ها در فاز سوم پشتیبانی می‌شوند.')
-
-    def navigate(self, address: str):
+    def navigate(self, address):
         url = QUrl(address)
-        if not url.isValid() or url.scheme().lower() not in ('http', 'https') or not url.host() or url.userInfo():
-            self.status_message.emit('آدرس اینترنتی معتبر نیست.')
-            return
-        self._web_mode()
+        if self.root is not None or not url.isValid() or url.scheme().lower() not in ('http', 'https') or not url.host() or url.userInfo():
+            raise ValueError('آدرس اینترنتی معتبر نیست.')
+        self.home = False
         self.setUrl(url)
-
-    def _web_mode(self):
-        if self.local_page is not None:
-            self.local_page.triggerAction(QWebEnginePage.WebAction.Stop)
-            self.setPage(self.browser_page)
-            self.local_page.deleteLater()
-            self.local_page = None
-            self.local_policy.root = None
 
     def open_local(self, address):
         path = Path(address).resolve()
-        if not path.is_file() or path.suffix.lower() not in ('.html', '.htm'):
-            raise ValueError('فایل HTML یافت نشد.')
-        self._web_mode()
-        if self.local_profile is None:
-            self.local_profile = QWebEngineProfile('JavanLocalTools', QApplication.instance())
-            if self.local_data is not None:
-                self.local_profile.setPersistentStoragePath(str(Path(self.local_data) / 'local-web-storage'))
-                self.local_profile.setCachePath(str(Path(self.local_data) / 'local-web-cache'))
-            self.local_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
-            self.local_policy = LocalPolicy(self.local_profile)
-            self.local_profile.setUrlRequestInterceptor(self.local_policy)
-            self.local_profile.downloadRequested.connect(self._cancel_download)
-        self.local_policy.root = path.parent
-        self.local_page = LocalPage(self.local_profile, self.local_policy, self)
-        settings = self.local_page.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False)
-        self.local_page.newWindowRequested.connect(self._popup_requested)
-        self.setPage(self.local_page)
+        if self.root is None or not path.is_relative_to(self.root) or not path.is_file() or path.suffix.lower() not in ('.html', '.htm'):
+            raise ValueError('فایل HTML معتبر یافت نشد.')
+        self.home = False
         self.setUrl(QUrl.fromLocalFile(str(path)))
 
     def show_home(self):
-        self._web_mode()
+        if self.root is not None:
+            raise ValueError('صفحه اصلی باید در زبانه وب باز شود.')
+        self.home = True
+        self.link_id = None
         self.setHtml(HOME_HTML)
