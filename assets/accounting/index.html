@@ -2200,6 +2200,7 @@
       }
 
       function generateId(prefix) {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return prefix + '-' + crypto.randomUUID();
         return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
       }
 
@@ -2417,8 +2418,8 @@
             return false;
           }
           revision = answer.revision;
-          committed = candidate;
-          applySnapshot(candidate);
+          committed = answer.data || candidate;
+          applySnapshot(committed);
           storageLocked = false;
           document.documentElement.dataset.ledgerReady = 'ready';
           showStorageBanner(answer.warning);
@@ -2444,15 +2445,30 @@
         if (el) el.textContent = state.debts.filter(d => !d.paid).length;
       }
 
+      function debtBalance(d) {
+        return Array.isArray(d.payments)
+          ? d.amount - d.payments.reduce((n, p) => n + p.amount, 0)
+          : (d.paid ? 0 : d.amount);
+      }
+      function addDebtPayment(d, amount, date) {
+        const balance = debtBalance(d);
+        if (!Number.isSafeInteger(amount) || amount <= 0 || amount > balance ||
+            !Number.isSafeInteger(d.amount) || d.paid) return false;
+        if (!Array.isArray(d.payments)) d.payments = [];
+        d.payments.push({id: generateId('payment'), amount, date});
+        d.paid = debtBalance(d) === 0;
+        d.paidDate = d.paid ? date : null;
+        return true;
+      }
       function parseAmount(str) {
         const n = Number(toEnDigits(str).replace(/[,،٬\s]/g, ''));
-        return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+        return Number.isSafeInteger(n) && n > 0 && n <= 1000000000000 ? n : 0;
       }
 
       function renderDebtsModal() {
         let openTotal = 0, openCount = 0;
         for (let i = 0; i < state.debts.length; i++) {
-          if (!state.debts[i].paid) { openTotal += Number(state.debts[i].amount) || 0; openCount++; }
+          if (!state.debts[i].paid) { openTotal += debtBalance(state.debts[i]); openCount++; }
         }
         document.getElementById('debt-stat-total').textContent = `${formatNumber(openTotal)} تومان`;
         document.getElementById('debt-stat-count').textContent = `${formatNumber(openCount)} مورد`;
@@ -2470,7 +2486,7 @@
 
         const totalLine = document.getElementById('debt-search-total');
         if (q && list.length) {
-          const sum = list.reduce((a, d) => a + (Number(d.amount) || 0), 0);
+          const sum = list.reduce((a, d) => a + (showPaid ? d.amount : debtBalance(d)), 0);
           totalLine.textContent = `جمع ${showPaid ? 'پرداخت‌شده' : 'نسیه باز'} برای «${document.getElementById('debt-search').value.trim()}»: ${formatNumber(sum)} تومان`;
         } else {
           totalLine.textContent = '';
@@ -2487,14 +2503,14 @@
         const LIMIT = 200;
         tbody.innerHTML = list.slice(0, LIMIT).map(d => `
           <tr class="${showPaid ? 'debt-paid-row' : ''}">
-            <td style="font-weight:700;">${escapeHtml(d.name)}</td>
-            <td class="num-tabular" style="font-weight:800; color:${showPaid ? 'var(--emerald-600)' : 'var(--amber-600)'};">${formatNumber(d.amount)}</td>
+            <td style="font-weight:700;">${escapeHtml(d.name)}${d.invoiceId ? `<div style="font-size:11px;color:var(--text-secondary)">متصل به فاکتور ${escapeHtml(state.invoices.find(i=>i.id===d.invoiceId)?.invoiceNumber || "")}</div>` : ""}</td>
+            <td class="num-tabular" style="font-weight:800; color:${showPaid ? 'var(--emerald-600)' : 'var(--amber-600)'};">${formatNumber(showPaid ? d.amount : debtBalance(d))}${Array.isArray(d.payments) && d.payments.length ? `<div style="font-size:10px">اصل: ${formatNumber(d.amount)} | وصول: ${formatNumber(d.amount-debtBalance(d))}</div>` : ""}</td>
             <td class="num-tabular" style="color:var(--text-secondary);">${escapeHtml(showPaid ? (d.paidDate || '') : (d.date || ''))}</td>
             <td style="text-align:center;">
               <div style="display:inline-flex; gap:5px;">
                 ${showPaid
                   ? `<button type="button" class="btn btn-xs btn-outline" data-debt-act="reopen" data-id="${escapeHtml(d.id)}">برگشت</button>`
-                  : `<button type="button" class="btn btn-xs btn-emerald" data-debt-act="pay" data-id="${escapeHtml(d.id)}">پرداخت شد ✓</button>`}
+                  : `<button type="button" class="btn btn-xs btn-emerald" data-debt-act="pay" data-id="${escapeHtml(d.id)}">تسویه ✓</button><button type="button" class="btn btn-xs btn-outline" data-debt-act="partial" data-id="${escapeHtml(d.id)}">پرداخت جزئی</button>`}
                 <button type="button" class="btn btn-xs btn-soft-danger" data-debt-act="delete" data-id="${escapeHtml(d.id)}" title="حذف">✕</button>
               </div>
             </td>
@@ -2535,6 +2551,7 @@
             date: getTodayJalali(),
             paid: false,
             paidDate: null,
+            payments: [],
             createdAt: Date.now()
           });
           if (!await saveDebts()) return;
@@ -2560,19 +2577,30 @@
           if (!d) return;
           const act = btn.dataset.debtAct;
 
-          if (act === 'pay') {
-            d.paid = true;
-            d.paidDate = getTodayJalali();
+          if (act === 'pay' || act === 'partial') {
+            const balance = debtBalance(d);
+            let amount = balance;
+            if (act === 'partial') {
+              const input = window.prompt('مبلغ دریافتی (تومان)، مانده: ' + formatNumber(balance), '');
+              if (input === null) return;
+              amount = parseAmount(input);
+            }
+            if (!addDebtPayment(d, amount, getTodayJalali())) {
+              showToast('مبلغ معتبر و حداکثر برابر مانده بدهی وارد کنید. بدهی اعشاری قدیمی نیاز به بررسی دارد.', 'error'); return;
+            }
             if (!await saveDebts()) return;
             renderDebtsModal();
-            showToast(`نسیه «${d.name}» پرداخت شد ✓`, 'success');
+            showToast('پرداخت ثبت شد.', 'success');
           } else if (act === 'reopen') {
+            if (!window.confirm('همه وصول‌های این نسیه برگشت داده شوند؟ عملیات در گزارش حسابرسی ثبت می‌شود.')) return;
             d.paid = false;
             d.paidDate = null;
+            if (Array.isArray(d.payments)) d.payments = [];
             if (!await saveDebts()) return;
             renderDebtsModal();
             showToast(`نسیه «${d.name}» دوباره باز شد.`, 'info');
           } else if (act === 'delete') {
+            if (d.invoiceId) { showToast('نسیه متصل به فاکتور از این بخش حذف نمی‌شود.', 'error'); return; }
             openConfirm('حذف نسیه', `نسیه «${d.name}» (${formatNumber(d.amount)} تومان) حذف شود؟`, async () => {
               state.debts = state.debts.filter(x => x.id !== id);
               if (!await saveDebts()) return;
@@ -2941,13 +2969,14 @@
           const amount = Number(inv.finalToman) || 0;
           const isCredit = inv.paymentStatus === 'نسیه';
           totalSales += amount;
-          if (isCredit) creditTotal += amount;
+          if (isCredit && !state.debts.some(d => d.invoiceId === inv.id)) creditTotal += amount;
           if (inv.date === today) {
             todayCount++;
             if (!isCredit) todaySales += amount;
           }
         }
 
+        creditTotal += state.debts.reduce((n,d)=>n+(d.invoiceId ? debtBalance(d) : 0),0);
         document.getElementById('stat-today-sales').textContent = `${formatNumber(todaySales)} تومان`;
         document.getElementById('stat-today-count').textContent = `${formatNumber(todayCount)} فاکتور`;
         document.getElementById('stat-total-sales').textContent = `${formatNumber(totalSales)} تومان`;

@@ -13,6 +13,7 @@ import sqlite3
 from uuid import uuid4
 from .storage import atomic_write
 from .ledger_relational import create_schema, load_relational, sync_relational
+from .debt_rules import validate_debts, reconcile_new_invoices
 
 MAX_BYTES = 64 * 1024 * 1024
 MAX_ROWS = 100_000
@@ -99,6 +100,9 @@ def validate_snapshot(data):
     require(logo is None or (isinstance(logo, str) and len(logo) <= 3_000_000 and
             re.fullmatch(r'data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+', logo) is not None),
             'فرمت لوگو نامعتبر است؛ نسخه خام محفوظ می‌ماند.')
+    def fail(message):
+        raise LedgerError(message)
+    validate_debts(data, fail)
     return data
 
 
@@ -184,16 +188,32 @@ class LedgerSnapshot:
             except OSError:
                 pass
 
-    def save(self, revision, raw, reason='save'):
+    def save(self, revision, raw, reason='save', authorize=None):
         require(type(revision) is int and revision >= 0, 'نسخه ذخیره نامعتبر است.')
         require(reason in ('save', 'restore', 'migration'), 'نوع عملیات نامعتبر است.')
-        data = validate_snapshot(parse_json(raw))
-        payload = encode_json(data)
+        data = parse_json(raw)
+        if not isinstance(data, dict) or not all(isinstance(data.get(k), list) for k in ('invoices','debts','services')):
+            raise LedgerError('ساختار دفتر نامعتبر است.')
         with closing(self.connect()) as db:
             with db:
                 db.execute('BEGIN IMMEDIATE')
                 current, old = load_relational(db)
                 require(revision == current, 'دفتر تغییر کرده است؛ ابتدا دوباره بارگذاری کنید.')
+                if reason == 'save':
+                    # Validate primitive row shape before reconciliation; linked debt
+                    # amount/paid status may temporarily differ from the edited invoice.
+                    for key in ('invoices','debts','services'):
+                        require(all(isinstance(row, dict) and isinstance(row.get('id'), str) for row in data[key]), 'رکورد نامعتبر است.')
+                    def fail(message):
+                        raise LedgerError(message)
+                    try:
+                        reconcile_new_invoices(old, data, fail)
+                    except (KeyError, TypeError, AttributeError) as exc:
+                        raise LedgerError('رکورد مالی ناقص است.') from exc
+                validate_snapshot(data)
+                payload = encode_json(data)
+                if authorize is not None and not authorize(old, data, reason):
+                    raise LedgerError('عملیات مدیر تأیید نشد.')
                 if old is not None:
                     self._backup(current, encode_json(old), 'pre-restore' if reason == 'restore' else 'snapshot')
                 new_revision = current + 1
@@ -206,4 +226,4 @@ class LedgerSnapshot:
             self._prune()
         except (OSError, ValueError):
             warning = 'ثبت در پایگاه انجام شد؛ ساخت پشتیبان اضافی ناموفق بود.'
-        return {'revision': new_revision, 'warning': warning}
+        return {'revision': new_revision, 'warning': warning, 'data': data}
