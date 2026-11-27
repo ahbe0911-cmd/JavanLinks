@@ -1,7 +1,6 @@
-"""P0 durable snapshot ledger. Legacy LocalStorage is never written by this layer.
+"""Durable relational ledger with v1 snapshot migration and JSON recovery copies.
 
-This is a transitional whole-document store, not the normalized P1 ledger.
-A successful commit means SQLite has acknowledged a synchronous FULL transaction.
+The Qt bridge keeps its whole-document API for compatibility. Legacy data is never rewritten.
 """
 from contextlib import closing
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4
 from .storage import atomic_write
+from .ledger_relational import create_schema, load_relational, sync_relational
 
 MAX_BYTES = 64 * 1024 * 1024
 MAX_ROWS = 100_000
@@ -112,14 +112,31 @@ class LedgerSnapshot:
             if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
                 raise LedgerError('پایگاه حسابداری خراب است؛ از پشتیبان بازیابی شود.')
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise LedgerError('نسخه پایگاه حسابداری پشتیبانی نمی‌شود.')
-            if version == 0:
+            if version in (0, 1):
                 with db:
-                    db.execute('CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, payload TEXT NOT NULL)')
-                    db.execute('PRAGMA user_version=1')
-            # A missing table in an existing schema must not silently reset data.
-            db.execute('SELECT revision, payload FROM snapshot WHERE id=1').fetchone()
+                    db.execute('BEGIN IMMEDIATE')
+                    # A version-0 file with unrelated user tables is not a new ledger.
+                    if version == 0 and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1").fetchone():
+                        raise LedgerError('پایگاه ناشناخته است؛ مهاجرت متوقف شد.')
+                    old = db.execute('SELECT revision,payload FROM snapshot WHERE id=1').fetchone() if version == 1 else None
+                    if old:
+                        original = validate_snapshot(parse_json(old[1]))
+                        self._backup(old[0], old[1], 'pre-schema2')
+                    create_schema(db)
+                    if old:
+                        sync_relational(db, None, original, old[0], 'schema-migration')
+                        check_revision, check_data = load_relational(db)
+                        require(check_revision == old[0] and check_data == original, 'تطبیق مهاجرت ناموفق بود.')
+                    db.execute('PRAGMA user_version=2')
+            with db:
+                db.execute('BEGIN')
+                _, existing = load_relational(db)
+                if existing is not None:
+                    validate_snapshot(existing)
+            if db.execute('PRAGMA foreign_key_check').fetchone():
+                raise LedgerError('ارتباط رکوردهای دفتر خراب است.')
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=5)
@@ -135,10 +152,10 @@ class LedgerSnapshot:
 
     def load(self):
         with closing(self.connect()) as db:
-            row = db.execute('SELECT revision, payload FROM snapshot WHERE id=1').fetchone()
-        if row is None:
-            return {'revision': 0, 'data': None}
-        return {'revision': row[0], 'data': validate_snapshot(parse_json(row[1]))}
+            with db:
+                db.execute('BEGIN')
+                revision, data = load_relational(db)
+        return {'revision': revision, 'data': None if data is None else validate_snapshot(data)}
 
     def archive_legacy(self, raw):
         value = parse_json(raw)
@@ -175,15 +192,12 @@ class LedgerSnapshot:
         with closing(self.connect()) as db:
             with db:
                 db.execute('BEGIN IMMEDIATE')
-                old = db.execute('SELECT revision, payload FROM snapshot WHERE id=1').fetchone()
-                current = old[0] if old else 0
+                current, old = load_relational(db)
                 require(revision == current, 'دفتر تغییر کرده است؛ ابتدا دوباره بارگذاری کنید.')
-                if old:
-                    self._backup(current, old[1], 'pre-restore' if reason == 'restore' else 'snapshot')
+                if old is not None:
+                    self._backup(current, encode_json(old), 'pre-restore' if reason == 'restore' else 'snapshot')
                 new_revision = current + 1
-                db.execute('INSERT INTO snapshot(id, revision, payload) VALUES(1, ?, ?) '
-                           'ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, payload=excluded.payload',
-                           (new_revision, payload))
+                sync_relational(db, old, data, new_revision, reason)
         # Transaction already committed; don't falsely report it failed if the
         # extra post-commit copy fails. The pre-commit copy and DB remain intact.
         warning = ''
