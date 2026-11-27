@@ -25,6 +25,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build and test native WebView2 host
+        shell: pwsh
+        run: ./scripts/build_edge.ps1
       - name: Build and verify executable
         shell: pwsh
         run: ./build_windows.ps1 -Python python

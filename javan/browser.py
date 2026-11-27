@@ -104,7 +104,8 @@ class BrowserSessions(QObject):
     def _new_web_profile(self):
         profile = QWebEngineProfile(self)
         profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
-        profile.setHttpCacheMaximumSize(32 * 1024 * 1024)
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
+        profile.setHttpCacheMaximumSize(192 * 1024 * 1024)
         profile.setPersistentPermissionsPolicy(QWebEngineProfile.PersistentPermissionsPolicy.AskEveryTime)
         profile.downloadRequested.connect(self.download_handler)
         return profile

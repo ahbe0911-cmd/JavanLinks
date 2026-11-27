@@ -49,3 +49,9 @@ def origin_label(url: str) -> str:
     if parsed.scheme in ('http', 'https'):
         return parsed.scheme + '://' + parsed.netloc.rsplit('@', 1)[-1]
     return 'صفحه داخلی'
+
+
+def unchanged_link_ids(old, new):
+    """Title/category edits do not invalidate an existing renderer."""
+    previous = {item.id: (item.kind, item.url) for item in old}
+    return {item.id for item in new if previous.get(item.id) == (item.kind, item.url)}

@@ -35,3 +35,14 @@ class RiskyDownloadTests(unittest.TestCase):
         from javan.browser_utils import risky_download
         for name in ('report.pdf', 'photo.jpg', 'backup.json', 'list.csv', 'archive.zip'):
             self.assertFalse(risky_download(name), name)
+
+
+class LinkReuseTests(unittest.TestCase):
+    def test_unrelated_edit_does_not_reload_existing_page(self):
+        from javan.catalog import Link
+        from javan.browser_utils import unchanged_link_ids
+        a = Link('a','A','https://a.example/','cat')
+        b = Link('b','B','https://b.example/','cat')
+        renamed = Link('a','New title','https://a.example/','new cat')
+        changed = Link('b','B','https://new.example/','cat')
+        self.assertEqual(unchanged_link_ids([a,b],[renamed,changed]), {'a'})

@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow, QLineEd
     QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget, QTabWidget,
     QDialog, QFileDialog, QMenu, QToolButton, QSplitter)
 from .browser import BrowserView, BrowserSessions
+from .edge_host import EdgeHost
+from .browser_utils import unchanged_link_ids
 from .browser_utils import next_zoom, web_address, origin_label
 from .catalog import Link
 from .sidebar import Sidebar
@@ -41,6 +43,8 @@ class MainWindow(QMainWindow):
         self.shortcuts = []
         self.downloads = DownloadManager(self)
         self.sessions = BrowserSessions(self.store.path.parent, self.downloads.receive)
+        self.edge = EdgeHost(self.store.path.parent, self)
+        self.catalog_links = tuple(self.store.state.links)
         root = QWidget()
         root.setObjectName('root')
         self.setCentralWidget(root)
@@ -78,6 +82,11 @@ class MainWindow(QMainWindow):
         self.economy_button = self.button(row, 'سبک', 'کاهش فعالیت تب‌های غیرفعال با رعایت پیشنهاد موتور مرورگر', self.toggle_economy)
         self.economy_button.setObjectName('economyButton')
         self.economy_button.setCheckable(True)
+        self.edge_button = self.button(row, 'Edge', 'موتور Edge WebView2 برای سایت‌های اینترنتی؛ حسابداری تغییر نمی‌کند', lambda: None)
+        self.edge_button.setCheckable(True)
+        self.edge_button.setEnabled(self.edge.available())
+        self.edge_button.setChecked(self.edge.available())
+        self.edge_button.setObjectName('economyButton')
         self.page_title = label('صفحه اصلی', 'pageTitle')
         self.page_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self.page_title, 1)
@@ -148,6 +157,7 @@ class MainWindow(QMainWindow):
         bottom = QHBoxLayout(status_card)
         bottom.setContentsMargins(10, 5, 10, 5)
         self.status = label('آماده', 'status')
+        self.edge.status.connect(self.status.setText)
         self.origin = label('صفحه داخلی', 'address')
         self.origin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.origin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
@@ -244,7 +254,7 @@ class MainWindow(QMainWindow):
         if self.print_jobs or self.downloads.active_count():
             warn(self, 'ابتدا چاپ و دانلودهای فعال را به پایان برسانید.')
             return
-        if not ask(self, 'همه زبانه‌های اینترنتی بسته و نشست ورود مشتری پاک شود؟ فایل‌های دانلودشده روی دیسک حذف نمی‌شوند. حسابداری و ابزارهای HTML محفوظ می‌مانند.'):
+        if not ask(self, 'همه زبانه‌های اینترنتی Qt و Edge بسته و نشست مشتری پاک شود؟ دانلودهای فعال Edge ممکن است متوقف شوند؛ فایل‌های ذخیره‌شده حذف نمی‌شوند. حسابداری محفوظ می‌ماند.'):
             return
         for i in range(self.tabs.count() - 1, -1, -1):
             v = self.tabs.widget(i)
@@ -253,6 +263,7 @@ class MainWindow(QMainWindow):
                 self.tabs.removeTab(i)
                 v.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.edge.close_session()
         self.sessions.reset_web()
         self.downloads.clear_finished()
         self.sidebar.clear_active()
@@ -260,6 +271,7 @@ class MainWindow(QMainWindow):
         self.status.setText('نشست اینترنتی جدید آماده است؛ فایل‌های قبلی را از مسیر دانلود بررسی کنید.')
 
     def dispose_views(self):
+        self.edge.shutdown()
         self.economy_timer.stop()
         for i in range(self.tabs.count() - 1, -1, -1):
             v = self.tabs.widget(i)
@@ -361,6 +373,12 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex((self.tabs.currentIndex() + 1) % self.tabs.count())
 
     def open_link(self, link: Link):
+        if link.kind == 'web' and self.edge_button.isChecked():
+            try:
+                self.edge.open(link.id, link.url, link.title)
+            except (ValueError, OSError) as exc:
+                warn(self, 'باز کردن Edge ناموفق بود. می‌توانید حالت Edge را خاموش کنید.')
+            return
         for i in range(self.tabs.count()):
             v = self.tabs.widget(i)
             if v.link_id == link.id:
@@ -380,7 +398,11 @@ class MainWindow(QMainWindow):
             if not ask(self, 'فقط فایل HTML مورد اعتماد را اجرا کنید. این ابزار به فایل‌های پوشه خودش دسترسی دارد. ادامه می‌دهید؟'):
                 self.sidebar.clear_active()
                 return
-        v = self.make_tab(root, link.title)
+        v = next((self.tabs.widget(i) for i in range(self.tabs.count()) if root is None and self.tabs.widget(i).home and self.tabs.widget(i) not in self.print_jobs), None)
+        if v is None:
+            v = self.make_tab(root, link.title)
+        else:
+            self.tabs.setCurrentWidget(v)
         if v is None:
             self.sidebar.clear_active()
             return
@@ -418,6 +440,12 @@ class MainWindow(QMainWindow):
             return
         try:
             url = web_address(self.address.text())
+            if self.edge_button.isChecked() and view.root is None:
+                self.edge.open('address:' + url, url, 'نشانی اینترنتی')
+                return
+            from PySide6.QtCore import QUrl
+            if view.root is None and view.url() == QUrl(url):
+                return
             if view.root is not None:
                 view = self.make_tab()
                 if view is None:
@@ -617,9 +645,13 @@ class MainWindow(QMainWindow):
 
     def catalog_changed(self):
         self.sidebar.set_links(self.store.state.links)
-        # Existing pages remain open, but future launches use edited addresses.
+        valid = unchanged_link_ids(self.catalog_links, self.store.state.links)
+        self.catalog_links = tuple(self.store.state.links)
+        # Keep unaffected live tabs even after adding or editing unrelated links.
         for i in range(self.tabs.count()):
-            self.tabs.widget(i).link_id = None
+            view = self.tabs.widget(i)
+            if view.link_id not in valid:
+                view.link_id = None
         self._apply_sidebar()
 
     def toggle_sidebar(self):
@@ -636,6 +668,9 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         if self.accounting_view() is not None and not ask(self, 'برنامه بسته شود؟ فاکتورهای ثبت‌شده محفوظ هستند؛ ابتدا فاکتور در حال ویرایش را ثبت کنید.'):
+            event.ignore()
+            return
+        if self.edge.active() and not ask(self, 'مرورگر Edge نیز بسته شود؟ دانلودهای فعال آن ممکن است متوقف شوند.'):
             event.ignore()
             return
         if self.downloads.active_count() and not ask(self, 'دانلود فعال وجود دارد. دانلودها لغو و برنامه بسته شود؟'):
