@@ -1,0 +1,62 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: javan-windows-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build and verify executable
+        shell: pwsh
+        run: ./build_windows.ps1 -Python python
+      - name: Upload standalone Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: JavanLinks-Windows-x64
+          path: |
+            dist/JavanLinks.exe
+            dist/JavanLinks.exe.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: JavanLinks-Windows-x64
+          path: release
+      - name: Publish verified EXE
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum --check JavanLinks.exe.sha256
+          if gh release view windows-latest >/dev/null 2>&1; then
+            gh release upload windows-latest JavanLinks.exe JavanLinks.exe.sha256 --clobber
+          else
+            gh release create windows-latest JavanLinks.exe JavanLinks.exe.sha256 --target "$GITHUB_SHA" --title "JavanLinks Windows x64" --notes "Standalone executable; unsigned; Windows 10/11 x64. Build and startup smoke test passed."
+          fi

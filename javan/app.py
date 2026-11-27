@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 from PySide6.QtCore import Qt, QStandardPaths, QLockFile
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
 from .theme import STYLE, configure_font
 from .window import MainWindow
 from .manager import warn
@@ -16,6 +17,9 @@ def run() -> int:
     app.setApplicationVersion(__version__)
     app.setOrganizationName('Javan')
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    icon = Path(__file__).resolve().parent.parent / 'assets' / 'javan.ico'
+    if icon.is_file():
+        app.setWindowIcon(QIcon(str(icon)))
     configure_font(app)
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)

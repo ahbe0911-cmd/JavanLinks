@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         nav = QHBoxLayout(toolbar)
         nav.setContentsMargins(8, 6, 8, 6)
         nav.setSpacing(4)
+        toolbar.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         nav.setDirection(QHBoxLayout.Direction.LeftToRight)
         self.back = self.button(nav, '←', 'بازگشت (Alt+Left)', lambda: self.current().back())
         self.forward = self.button(nav, '→', 'جلو (Alt+Right)', lambda: self.current().forward())

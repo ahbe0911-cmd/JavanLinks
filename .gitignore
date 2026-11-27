@@ -6,3 +6,6 @@ build/
 dist/
 *.spec
 assets/fonts/*.ttf
+assets/javan.ico
+assets/javan.png
+assets/fonts/OFL.txt

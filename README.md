@@ -61,3 +61,17 @@ py -3.12 -m venv .venv
 - میانبرها: Ctrl+T / Ctrl+W / Ctrl+Tab / Ctrl+L / Ctrl+R / Ctrl+P / Ctrl+J / Ctrl+= / Ctrl+- / Ctrl+0 و Alt+Left/Right.
 - آزمون منطق: python -m unittest discover -s tests -v ؛ آزمون GUI: python -m tests.smoke_gui. چاپ واقعی، دانلود، بازشدن پنجره ورود، PDF، ابزار محلی دارای localStorage و چند تب را روی ویندوز آزمایش کنید.
 - فاز ۴ (EXE و Workflow) هنوز شروع نشده است.
+
+
+## فاز ۴ — نسخه 0.4.0
+
+پس از موفقیت ساخت GitHub Actions، فایل مستقل `JavanLinks.exe` و SHA256 از صفحه Releases یا Artifact به نام JavanLinks-Windows-x64 قابل دریافت است.
+
+- Windows 10/11 x64؛ نصب Python روی سیستم مقصد لازم نیست. Qt WebEngine در بسته تک‌فایلی قرار دارد و هنگام شروع در پوشه موقت استخراج می‌شود؛ شروع نخست ممکن است کند باشد.
+- آیکون اختصاصی با منبع SVG و اسکریپت ساخت ICO چنداندازه. فونت Vazirmatn از Google Fonts به همراه متن مجوز SIL OFL در مرحله ساخت دریافت و در برنامه بسته‌بندی می‌شود.
+- EXE امضای Authenticode ندارد؛ هش SHA256 برای کنترل یکپارچگی ارائه می‌شود. استفاده سازمانی و بانکی نیازمند بررسی امنیتی، به‌روزرسانی Qt و تست سامانه‌هاست.
+- فایل داده در پوشه محلی ویندوز باقی می‌ماند. پیش از ارتقا از JSON و داده‌های داخل ابزارهای HTML جداگانه پشتیبان بگیرید.
+- ساخت محلی با Python 3.12 x64: در PowerShell، `powershell -ExecutionPolicy Bypass -File .\build_windows.ps1`. خروجی `dist\JavanLinks.exe`.
+- Workflow پس از هر push به main یا اجرای دستی، آزمون‌های منطق و تست ابتدایی اجرای EXE را انجام می‌دهد؛ فقط پس از موفقیت، خروجی منتشر می‌شود.
+- آزمون ابتدایی شامل رندر صفحه اصلی، جستجو، تب‌ها و زوم است. چاپ واقعی، دانلود و ورود سامانه‌ها باید دستی آزمایش شوند.
+- مجوز فونت در بسته assets/fonts/OFL.txt قرار دارد. Qt/PySide6 و سایر وابستگی‌ها تحت مجوزهای خودشان هستند؛ پیش از توزیع تجاری، الزامات مجوزهای Qt/PySide6، PyInstaller و Chromium را بررسی کنید.
