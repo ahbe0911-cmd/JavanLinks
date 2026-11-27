@@ -24,12 +24,21 @@ Run-Python -m unittest discover -s tests -v
 if ($LASTEXITCODE -ne 0) { throw "Accounting JavaScript tests failed" }
 Run-Python -m PyInstaller --noconfirm --clean --onefile --windowed --noupx --name JavanLinks --icon assets/javan.ico --version-file scripts/version_info.txt --add-data "assets;assets" main.py
 $exe = (Resolve-Path "dist\JavanLinks.exe").Path
-$process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru
-if (-not $process.WaitForExit(180000)) {
-    & taskkill /PID $process.Id /T /F
-    throw "Frozen WebEngine startup test timed out."
+$smokeLog = Join-Path ([System.IO.Path]::GetTempPath()) ("JavanLinks-startup-" + [guid]::NewGuid().ToString("N") + ".log")
+$env:JAVAN_CI_SMOKE_LOG = $smokeLog
+try {
+    $process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru
+    $finished = $process.WaitForExit(180000)
+    if (-not $finished) {
+        & taskkill /PID $process.Id /T /F
+    }
+    if (Test-Path $smokeLog) { Get-Content -LiteralPath $smokeLog -Encoding utf8 }
+    if (-not $finished) { throw "Frozen WebEngine startup test timed out." }
+    if ($process.ExitCode -ne 0) { throw "Frozen WebEngine startup test failed: $($process.ExitCode)" }
+} finally {
+    Remove-Item Env:JAVAN_CI_SMOKE_LOG -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $smokeLog -ErrorAction SilentlyContinue
 }
-if ($process.ExitCode -ne 0) { throw "Frozen WebEngine startup test failed: $($process.ExitCode)" }
 # Verify actual accounting storage survives two independent frozen processes.
 $probe = Join-Path ([System.IO.Path]::GetTempPath()) ("JavanLinks-probe-" + [guid]::NewGuid().ToString("N"))
 try {

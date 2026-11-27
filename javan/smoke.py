@@ -17,6 +17,17 @@ def run_smoke():
     window = MainWindow(CatalogStore(Path(temp.name) / 'catalog.json'))
     window.show()
     first = window.browser
+    from PySide6.QtWebEngineCore import QWebEngineProfile
+    if window.sessions.web.persistentPermissionsPolicy() != QWebEngineProfile.PersistentPermissionsPolicy.AskEveryTime:
+        raise AssertionError('Session permission policy is not AskEveryTime')
+    window.economy_button.setChecked(True)
+    window.toggle_economy(True)
+    if not window.economy_timer.isActive():
+        raise AssertionError('Economy timer did not start')
+    window.economy_button.setChecked(False)
+    window.toggle_economy(False)
+    if window.economy_timer.isActive():
+        raise AssertionError('Economy timer did not stop')
     completed = False
 
     def result(html):
@@ -42,6 +53,8 @@ def run_smoke():
                 raise AssertionError('Close tab failed')
             app.exit(0)
         except Exception:
+            import sys
+            sys.excepthook(*sys.exc_info())
             app.exit(2)
 
     def loaded(ok):
@@ -52,7 +65,9 @@ def run_smoke():
 
     first.loadFinished.connect(loaded)
     QTimer.singleShot(60000, lambda: app.exit(4))
-    return app.exec()
+    code = app.exec()
+    window.dispose_views()
+    return code
 
 
 
