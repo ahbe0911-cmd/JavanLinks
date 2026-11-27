@@ -1,0 +1,4511 @@
+JavanLinks v0.5.0 — complete source review snapshot
+Repository: https://github.com/ahbe0911-cmd/JavanLinks
+Source commit: 8d21e752366902cc3bd7508e6785f81d043ac30c
+UTF-8; original file paths and contents. No font binaries or runtime data included.
+
+FILE MANIFEST (32 tracked files)
+.github/workflows/windows-build.yml (1797 bytes)
+.gitignore (139 bytes)
+README.md (12139 bytes)
+assets/accounting/index.html (147846 bytes)
+assets/fonts/README.txt (227 bytes)
+assets/javan.svg (868 bytes)
+build_windows.ps1 (2447 bytes)
+javan/__init__.py (68 bytes)
+javan/accounting.py (4808 bytes)
+javan/app.py (1820 bytes)
+javan/browser.py (7797 bytes)
+javan/browser_utils.py (1750 bytes)
+javan/catalog.py (3903 bytes)
+javan/downloads.py (6544 bytes)
+javan/manager.py (10933 bytes)
+javan/sidebar.py (4992 bytes)
+javan/smoke.py (4146 bytes)
+javan/storage.py (4086 bytes)
+javan/theme.py (5473 bytes)
+javan/window.py (22663 bytes)
+main.py (394 bytes)
+requirements-build.txt (56 bytes)
+requirements.txt (16 bytes)
+run.bat (594 bytes)
+scripts/prepare_assets.py (2468 bytes)
+scripts/version_info.txt (667 bytes)
+tests/__init__.py (0 bytes)
+tests/smoke_gui.py (2401 bytes)
+tests/test_accounting.py (2222 bytes)
+tests/test_browser_utils.py (1145 bytes)
+tests/test_catalog.py (2110 bytes)
+tests/test_storage.py (3708 bytes)
+
+========================================================================================
+FILE: .github/workflows/windows-build.yml
+GIT BLOB: f001b1c143f5e859f1ecddbaa296250a95130817
+UTF-8 BYTES: 1797
+========================================================================================
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: javan-windows-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build and verify executable
+        shell: pwsh
+        run: ./build_windows.ps1 -Python python
+      - name: Upload standalone Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: JavanLinks-Windows-x64
+          path: |
+            dist/JavanLinks.exe
+            dist/JavanLinks.exe.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: JavanLinks-Windows-x64
+          path: release
+      - name: Publish verified EXE
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum --check JavanLinks.exe.sha256
+          if gh release view windows-latest >/dev/null 2>&1; then
+            gh release upload windows-latest JavanLinks.exe JavanLinks.exe.sha256 --clobber
+          else
+            gh release create windows-latest JavanLinks.exe JavanLinks.exe.sha256 --target "$GITHUB_SHA" --title "JavanLinks Windows x64" --notes "Standalone executable; unsigned; Windows 10/11 x64. Build and startup smoke test passed."
+          fi
+
+
+========================================================================================
+FILE: .gitignore
+GIT BLOB: c957f4a9f9c06e7cf3ab7310083d54704b3271f9
+UTF-8 BYTES: 139
+========================================================================================
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+build/
+dist/
+*.spec
+assets/fonts/*.ttf
+assets/javan.ico
+assets/javan.png
+assets/fonts/OFL.txt
+
+
+========================================================================================
+FILE: README.md
+GIT BLOB: 05857bd7e31897fd1ef03b07ed952051e3038213
+UTF-8 BYTES: 12139
+========================================================================================
+# لینک‌های کاربردی کافینت جوان — فاز ۱
+
+نسخه 0.1.0، اسکلت مستقل نرم‌افزار ویندوزی بر پایه Python و PySide6/Qt WebEngine.
+
+## اجرای ویندوز
+
+پیش‌نیاز پیشنهادی: Windows 10/11 نسخه ۶۴ بیتی، Python 3.11 یا 3.12 نسخه ۶۴ بیتی و اینترنت برای نصب وابستگی‌ها. فایل ZIP را استخراج و `run.bat` را اجرا کنید. یا در PowerShell از پوشه پروژه:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe main.py
+```
+
+اگر فونت Vazirmatn را در Windows نصب کنید، برنامه از آن استفاده می‌کند. همچنین می‌توانید فایل TTF رسمی را به `assets/fonts/` اضافه کنید. در غیاب فونت وزیرمتن، فونت سیستمی جایگزین می‌شود. فایل فونت همراه این بسته نیست.
+
+## امکانات فاز اول
+
+- پنجره تمام‌اندازه با چیدمان RTL و منوی راست، قابل جمع‌کردن.
+- صفحه اصلی داخلی مستقل از اینترنت و شش لینک نمونه در چهار دسته.
+- جستجوی زنده نام، دسته، توضیحات و دامنه با نرمال‌سازی حروف فارسی/عربی.
+- یک نمای Qt WebEngine، نشانگر پیشرفت و وضعیت خطای بارگذاری.
+- پروفایل موقت مرورگر؛ نشست کاربران تا زمان خروج کامل از برنامه برقرار است. این نسخه جایگزین سامانه مدیریت نشست مشتریان کافی‌نت نیست.
+
+## آزمون
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m tests.smoke_gui
+```
+
+آزمون اول بدون Qt نیز اجرا می‌شود؛ آزمون دوم به Qt و محیط گرافیکی نیاز دارد. برای تست دستی، لینک‌های نمونه را باز کنید و نمایش وب‌سایت، ورود، ریدایرکت و خطاهای احتمالی را بررسی کنید. لینک‌ها نمونه‌اند و در این محیط به‌صورت زنده آزموده نشده‌اند.
+
+## مرزبندی فازها
+
+فاز ۲: CRUD، فایل HTML محلی، JSON، پشتیبان‌گیری و بازیابی. فاز ۳: تب‌ها، کنترل مرورگر، چاپ، زوم، دانلود و مدیریت پنجره‌های جدید. فاز ۴: بسته‌بندی EXE، آیکون و GitHub Actions. در فاز ۱ دانلود و پنجره‌های جدید عمداً فعال نشده‌اند. سازگاری تمام سامانه‌های بانکی/دولتی یا کاهش مصرف حافظه در مقایسه با Chrome تضمین نشده است؛ Qt WebEngine نیز مبتنی بر Chromium است. از مرورگر روی سامانه‌های حساس تا تکمیل و آزمون امنیت و سازگاری استفاده عملیاتی نشود.
+
+## ساختار
+
+`main.py`: نقطه ورود؛ `javan/app.py`: راه‌اندازی؛ `catalog.py`: مدل و جستجو؛ `sidebar.py`: منوی خدمات؛ `browser.py`: مرورگر؛ `window.py`: پنجره؛ `theme.py`: ظاهر و فونت؛ `tests/`: آزمون‌ها.
+
+
+## فاز ۲ — نسخه 0.2.0
+
+- دکمه مدیریت لینک‌ها: افزودن، ویرایش، حذف، دسته‌بندی قابل تایپ، انتخاب HTML و جستجوی زنده.
+- ذخیره خودکار در `catalog.json` در پوشه داده محلی Qt (معمولاً `%LOCALAPPDATA%\Javan\Javan Links` در ویندوز). نوشتن اتمیک؛ در خرابی فایل اصلی برنامه داده را بازنویسی نمی‌کند.
+- پشتیبان JSON شامل لینک‌ها و وضعیت جمع‌شدن منو است. بازیابی کل فهرست و تنظیمات را جایگزین می‌کند و قبل از آن `catalog.previous.json` را می‌نویسد. فایل‌های HTML، دارایی‌های مرتبط، نشست وب و داده داخلی HTML در JSON نیستند. مسیرهای محلی مطلق‌اند و روی سیستم مقصد ممکن است به ویرایش نیاز داشته باشند.
+- HTML از فایل اصلی باز می‌شود و حذف لینک فایل را حذف نمی‌کند. ابزار محلی پروفایل جدا دارد و درخواست‌های شبکه و فایل خارج از پوشه ابزار محدود می‌شوند؛ فقط فایل‌های مورد اعتماد اجرا شوند. داده محلی WebEngine در پوشه جداگانه نگه داشته می‌شود؛ رفتار localStorage در file:// باید روی ویندوز و هر ابزار آزمایش شود.
+- تب، چاپ، دانلود و ساخت EXE هنوز در این فاز فعال نیستند. بخش‌های فاز ۱ در بالا سابقه نسخه قبلی هستند.
+- تست منطق: `python -m unittest discover -s tests -v`. تست گرافیکی: `python -m tests.smoke_gui`. برای تست دستی فاز دوم، یک HTML ساده و یک وب‌سایت اضافه کنید، برنامه را بسته و باز کنید، یک لینک را ویرایش یا حذف کنید، پشتیبان بگیرید و بازیابی کنید؛ مسیر HTML مفقود را نیز آزمایش کنید.
+
+
+## فاز ۳ — نسخه 0.3.0
+
+- تا ۲۴ زبانه، جابه‌جایی و بستن تب‌ها؛ انتخاب لینک باز به همان تب می‌رود؛ تب‌های اینترنتی نشست موقت مشترک دارند.
+- عقب، جلو، توقف/رفرش، خانه، آدرس HTTP(S)، زوم ۵۰ تا ۲۰۰ درصد برای هر تب، نمایش پیشرفت و مبدأ واقعی سایت.
+- چاپ با پنجره استاندارد چاپ سیستم و ذخیره PDF؛ هنگام چاپ، تب بسته نمی‌شود.
+- دانلود با انتخاب مقصد، وضعیت و درصد، توقف/ادامه/لغو و هشدار خروج در زمان دانلود فعال. تاریخچه دانلود فقط برای نشست جاری است؛ فایل دانلودشده خودکار اجرا نمی‌شود.
+- پنجره جدید ناشی از تعامل کاربر در تب داخلی باز می‌شود؛ پنجره‌های خودکار مسدود می‌شوند و ممکن است برخی ورودهای بانکی نیازمند بررسی باشند.
+- ابزارهای HTML از وب جدا و به پروفایل پایدار اختصاصی هر پوشه منتقل شده‌اند. فایل‌های اصلی و JSON قبلی دست‌نخورده‌اند؛ داده داخلی مرورگر محلی فاز دوم خودکار به پروفایل‌های جدید منتقل نمی‌شود و پوشه‌های قدیمی حفظ می‌شوند. برای ابزارهای دارای داده مهم، پیش از ارتقا از داخل خود ابزار پشتیبان بگیرید.
+- میانبرها: Ctrl+T / Ctrl+W / Ctrl+Tab / Ctrl+L / Ctrl+R / Ctrl+P / Ctrl+J / Ctrl+= / Ctrl+- / Ctrl+0 و Alt+Left/Right.
+- آزمون منطق: python -m unittest discover -s tests -v ؛ آزمون GUI: python -m tests.smoke_gui. چاپ واقعی، دانلود، بازشدن پنجره ورود، PDF، ابزار محلی دارای localStorage و چند تب را روی ویندوز آزمایش کنید.
+- فاز ۴ (EXE و Workflow) هنوز شروع نشده است.
+
+
+## فاز ۴ — نسخه 0.4.0
+
+پس از موفقیت ساخت GitHub Actions، فایل مستقل `JavanLinks.exe` و SHA256 از صفحه Releases یا Artifact به نام JavanLinks-Windows-x64 قابل دریافت است.
+
+- Windows 10/11 x64؛ نصب Python روی سیستم مقصد لازم نیست. Qt WebEngine در بسته تک‌فایلی قرار دارد و هنگام شروع در پوشه موقت استخراج می‌شود؛ شروع نخست ممکن است کند باشد.
+- آیکون اختصاصی با منبع SVG و اسکریپت ساخت ICO چنداندازه. فونت Vazirmatn از Google Fonts به همراه متن مجوز SIL OFL در مرحله ساخت دریافت و در برنامه بسته‌بندی می‌شود.
+- EXE امضای Authenticode ندارد؛ هش SHA256 برای کنترل یکپارچگی ارائه می‌شود. استفاده سازمانی و بانکی نیازمند بررسی امنیتی، به‌روزرسانی Qt و تست سامانه‌هاست.
+- فایل داده در پوشه محلی ویندوز باقی می‌ماند. پیش از ارتقا از JSON و داده‌های داخل ابزارهای HTML جداگانه پشتیبان بگیرید.
+- ساخت محلی با Python 3.12 x64: در PowerShell، `powershell -ExecutionPolicy Bypass -File .\build_windows.ps1`. خروجی `dist\JavanLinks.exe`.
+- Workflow پس از هر push به main یا اجرای دستی، آزمون‌های منطق و تست ابتدایی اجرای EXE را انجام می‌دهد؛ فقط پس از موفقیت، خروجی منتشر می‌شود.
+- آزمون ابتدایی شامل رندر صفحه اصلی، جستجو، تب‌ها و زوم است. چاپ واقعی، دانلود و ورود سامانه‌ها باید دستی آزمایش شوند.
+- مجوز فونت در بسته assets/fonts/OFL.txt قرار دارد. Qt/PySide6 و سایر وابستگی‌ها تحت مجوزهای خودشان هستند؛ پیش از توزیع تجاری، الزامات مجوزهای Qt/PySide6، PyInstaller و Chromium را بررسی کنید.
+
+
+## نسخه 0.5.0 — حسابداری یکپارچه
+
+دکمه سبز «حسابداری» در هدر، فایل حسابداری v3 را بدون اینترنت در یک تب ثابت باز می‌کند. این تب فقط هنگام اولین کلیک ساخته می‌شود و کلیک مجدد به تب موجود برمی‌گردد. منطق مالی و کلیدهای LocalStorage فایل اصلی حفظ شده‌اند. HTML به مسیر دائمی `accounting/index.html` در پوشه AppLocalDataLocation کپی می‌شود؛ پروفایل اختصاصی پایدار این پوشه از نشست اینترنتی جداست. تغییر فایل EXE یا مسیر استخراج موقت آن، این مسیر و پروفایل را تغییر نمی‌دهد. داده‌های مرورگر قدیمی خارج از این برنامه خودکار وارد نمی‌شوند؛ از قابلیت پشتیبان JSON داخل حسابداری استفاده کنید.
+
+فونت وزیرمتن همراه بسته ساخته می‌شود. دکمه «فونت‌ها» اجازه می‌دهد ZIP/TTFهای روزنامه، نازنین و چهار وزن وزیرمتن را مستقیماً از دیسک وارد کنید؛ فایل‌های اضافی ZIP استخراج نمی‌شوند. روزنامه برای عنوان برند و نازنین برای متن توضیحی فاکتور چاپی A4/A5 استفاده می‌شوند، و وزیرمتن برای رابط و مبالغ. فایل‌های روزنامه و نازنین در مخزن عمومی منتشر نشده‌اند. دسترسی خارجی HTML حذف شده، ساعت در تب پنهان متوقف می‌شود و به‌روزرسانی پیشرفت دانلود به‌صورت تجمیعی انجام می‌شود.
+
+برای حفظ اطلاعات مالی، پشتیبان JSON داخلی حسابداری را به‌طور منظم در مسیر دیگری نگه دارید؛ پشتیبان مدیریت لینک‌ها شامل داده حسابداری نیست. حذف پوشه داده ویندوز یا پروفایل اختصاصی ممکن است اطلاعات را از بین ببرد. تغییرات CPU/RAM باید روی ویندوز واقعی اندازه‌گیری شوند.
+
+
+========================================================================================
+FILE: assets/accounting/index.html
+GIT BLOB: 12baf3a9beea7bf850e8caf8c5c43446aa15f884
+UTF-8 BYTES: 147846
+========================================================================================
+<!DOCTYPE html>
+<html lang="fa" dir="rtl" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>کافی‌نت جوان | سامانه هوشمند حسابداری و صدور فاکتور</title>
+
+  <link rel="stylesheet" href="fonts/accounting.css" />
+
+  <style>
+    /* ==========================================================================
+       ۱. متغیرهای طراحی (Design Tokens) - تم روز (پیش‌فرض) و تم شب
+       ========================================================================== */
+    :root {
+      /* پالت رنگی اصلی: سرمه‌ای عمیق، آبی رویال و فیروزه‌ای ملایم */
+      --navy-950: #061322;
+      --navy-900: #0b1f3a;
+      --navy-800: #102a4c;
+      --royal-600: #2563eb;
+      --royal-700: #1d4ed8;
+      --royal-50: #eff6ff;
+      --cyan-500: #06b6d4;
+      --cyan-600: #0891b2;
+      --cyan-50: #ecfeff;
+      --emerald-600: #059669;
+      --emerald-700: #047857;
+      --emerald-50: #ecfdf5;
+      --amber-600: #d97706;
+      --amber-50: #fffbeb;
+      --rose-600: #e11d48;
+      --rose-700: #be123c;
+      --rose-50: #fff1f2;
+
+      /* سطوح و متن‌ها - حالت روز */
+      --bg-app: #f1f5f9;
+      --bg-card: #ffffff;
+      --bg-subtle: #f8fafc;
+      --bg-hover: #f1f5f9;
+      --bg-input: #ffffff;
+      --border-color: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+
+      --header-bg: linear-gradient(135deg, #07172c 0%, #0f294a 55%, #163b68 100%);
+      --payable-bg: linear-gradient(135deg, #ecfdf5 0%, #ecfeff 100%);
+      --payable-border: #99f6e4;
+
+      --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+      --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 10px 28px -6px rgba(15, 23, 42, 0.1);
+      --shadow-lg: 0 24px 48px -12px rgba(15, 23, 42, 0.25);
+
+      --radius-xs: 6px;
+      --radius-sm: 9px;
+      --radius-md: 13px;
+      --radius-lg: 18px;
+      --font-main: 'Vazirmatn', 'Tahoma', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    /* تم شب (Dark Mode) */
+    [data-theme="dark"] {
+      --bg-app: #090f1a;
+      --bg-card: #111a2c;
+      --bg-subtle: #162238;
+      --bg-hover: #1d2c47;
+      --bg-input: #0d1525;
+      --border-color: #22324d;
+      --border-strong: #314669;
+      --text-primary: #f1f5f9;
+      --text-secondary: #cbd5e1;
+      --text-muted: #94a3b8;
+
+      --royal-50: rgba(37, 99, 235, 0.16);
+      --cyan-50: rgba(6, 182, 212, 0.14);
+      --emerald-50: rgba(5, 150, 105, 0.16);
+      --amber-50: rgba(217, 119, 6, 0.16);
+      --rose-50: rgba(225, 29, 72, 0.16);
+
+      --header-bg: linear-gradient(135deg, #050d1a 0%, #0b1b33 60%, #102849 100%);
+      --payable-bg: linear-gradient(135deg, rgba(5, 150, 105, 0.16) 0%, rgba(6, 182, 212, 0.14) 100%);
+      --payable-border: rgba(45, 212, 191, 0.35);
+
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 12px 30px -6px rgba(0, 0, 0, 0.45);
+      --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.65);
+    }
+
+    /* ==========================================================================
+       ۲. تنظیمات پایه، تایپوگرافی و اعداد هم‌عرض
+       ========================================================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      min-height: 100%;
+      font-family: var(--font-main);
+      background-color: var(--bg-app);
+      color: var(--text-primary);
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    button, input, select, textarea {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
+    }
+
+    .num-tabular {
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum" 1;
+    }
+
+    /* اسکرول‌بار ظریف */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ==========================================================================
+       ۳. هدر حرفه‌ای و پوسته اصلی
+       ========================================================================== */
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      background: var(--header-bg);
+      color: #ffffff;
+      padding: 10px 20px;
+      box-shadow: var(--shadow-md);
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .topbar-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-trigger {
+      position: relative;
+      width: 46px;
+      height: 46px;
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: transform 0.16s ease, border-color 0.16s ease;
+    }
+
+    .logo-trigger:hover {
+      transform: scale(1.04);
+      border-color: var(--cyan-500);
+    }
+
+    .logo-trigger img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #ffffff;
+      padding: 2px;
+    }
+
+    .logo-edit-hint {
+      position: absolute;
+      inset: 0;
+      background: rgba(7, 23, 44, 0.72);
+      color: #ffffff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.16s ease;
+    }
+
+    .logo-trigger:hover .logo-edit-hint {
+      opacity: 1;
+    }
+
+    .brand-text h1 {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.2px;
+      line-height: 1.25;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .brand-sub {
+      font-size: 0.76rem;
+      color: #bae6fd;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 1px;
+    }
+
+    .live-clock-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 2px 9px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      color: #e0f2fe;
+      font-weight: 600;
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #34d399;
+      box-shadow: 0 0 6px #34d399;
+    }
+
+    .header-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* ==========================================================================
+       ۴. سیستم دکمه‌ها
+       ========================================================================== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+      transition: transform 0.12s ease, opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-sm { padding: 6px 11px; font-size: 0.8rem; }
+    .btn-xs { padding: 4px 8px; font-size: 0.74rem; border-radius: var(--radius-xs); }
+    .btn-icon { padding: 7px; width: 36px; height: 36px; }
+
+    .btn-services {
+      background: linear-gradient(135deg, var(--royal-600) 0%, var(--cyan-600) 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.32);
+    }
+    .btn-services:hover {
+      opacity: 0.94;
+      transform: translateY(-1px);
+    }
+
+    .btn-glass {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+    .btn-glass:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .btn-primary {
+      background: var(--royal-600);
+      color: #ffffff;
+    }
+    .btn-primary:hover { background: var(--royal-700); }
+
+    .btn-emerald {
+      background: var(--emerald-600);
+      color: #ffffff;
+    }
+    .btn-emerald:hover { background: var(--emerald-700); }
+
+    .btn-navy {
+      background: var(--navy-800);
+      color: #ffffff;
+    }
+    .btn-navy:hover { background: var(--navy-900); }
+    [data-theme="dark"] .btn-navy {
+      background: var(--royal-600);
+    }
+    [data-theme="dark"] .btn-navy:hover {
+      background: var(--royal-700);
+    }
+
+    .btn-outline {
+      background: var(--bg-card);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    .btn-outline:hover {
+      background: var(--bg-hover);
+    }
+
+    .btn-soft-blue {
+      background: var(--royal-50);
+      color: var(--royal-600);
+      border-color: rgba(37, 99, 235, 0.25);
+    }
+    .btn-soft-blue:hover {
+      background: var(--royal-600);
+      color: #ffffff;
+    }
+
+    .btn-soft-danger {
+      background: var(--rose-50);
+      color: var(--rose-600);
+      border-color: rgba(225, 29, 72, 0.25);
+    }
+    .btn-soft-danger:hover {
+      background: var(--rose-600);
+      color: #ffffff;
+    }
+
+    .btn-danger {
+      background: var(--rose-600);
+      color: #ffffff;
+    }
+    .btn-danger:hover { background: var(--rose-700); }
+
+    .kbd-hint {
+      font-size: 0.68rem;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.22);
+      padding: 1px 6px;
+      border-radius: 5px;
+      letter-spacing: 0.3px;
+    }
+
+    .pill-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.2);
+      padding: 1px 7px;
+      border-radius: 99px;
+    }
+
+    /* ==========================================================================
+       ۵. فضای کاری اصلی فاکتور (Invoice Workspace - خلوت و استاندارد)
+       ========================================================================== */
+    .main-container {
+      flex: 1;
+      max-width: 1180px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 16px 20px 28px;
+    }
+
+    .workspace-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+    }
+
+    .workspace-header {
+      padding: 13px 18px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: var(--bg-card);
+    }
+
+    .workspace-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .workspace-title h2 {
+      font-size: 1rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .workspace-title h2 svg {
+      color: var(--royal-600);
+    }
+
+    /* فیلدهای مشخصات فاکتور */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1.1fr 0.9fr 0.95fr 1.1fr;
+      gap: 12px;
+      padding: 14px 18px;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .field-label {
+      display: block;
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .input, .select, .textarea {
+      width: 100%;
+      padding: 7px 11px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      background: var(--bg-input);
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.14s ease, box-shadow 0.14s ease;
+    }
+
+    .input:focus, .select:focus, .textarea:focus {
+      border-color: var(--royal-600);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+
+    .input-sm { padding: 6px 10px; font-size: 0.84rem; }
+
+    .search-box {
+      position: relative;
+      width: 100%;
+    }
+    .search-box svg {
+      position: absolute;
+      right: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+    .search-box .input {
+      padding-right: 35px;
+    }
+
+    /* جدول اقلام فاکتور */
+    .table-wrap {
+      overflow-x: auto;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: right;
+    }
+
+    .data-table th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-color);
+      white-space: nowrap;
+    }
+
+    .data-table td {
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border-color);
+      vertical-align: middle;
+      font-size: 0.86rem;
+    }
+
+    .data-table tbody tr:hover {
+      background: var(--bg-hover);
+    }
+
+    .inline-text-input {
+      width: 100%;
+      min-width: 150px;
+      padding: 5px 9px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-xs);
+      background: transparent;
+      font-weight: 700;
+      color: var(--text-primary);
+      outline: none;
+    }
+    .inline-text-input:hover, .inline-text-input:focus {
+      background: var(--bg-input);
+      border-color: var(--border-strong);
+    }
+    .inline-text-input:focus {
+      border-color: var(--royal-600);
+    }
+
+    .inline-price-input {
+      width: 122px;
+      padding: 5px 9px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-xs);
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+      font-weight: 700;
+      direction: ltr;
+      text-align: left;
+      outline: none;
+    }
+    .inline-price-input:focus {
+      background: var(--bg-input);
+      border-color: var(--royal-600);
+    }
+
+    .qty-stepper {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-xs);
+      overflow: hidden;
+      background: var(--bg-input);
+    }
+
+    .qty-btn {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+      font-weight: 800;
+      font-size: 0.95rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .qty-btn:hover { background: var(--border-color); }
+
+    .qty-val {
+      width: 44px;
+      height: 28px;
+      border: none;
+      border-right: 1px solid var(--border-color);
+      border-left: 1px solid var(--border-color);
+      background: transparent;
+      text-align: center;
+      font-weight: 700;
+      outline: none;
+      -moz-appearance: textfield;
+    }
+    .qty-val::-webkit-outer-spin-button,
+    .qty-val::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+    /* حالت خالی جدول */
+    .empty-box {
+      text-align: center;
+      padding: 36px 16px;
+      color: var(--text-muted);
+    }
+    .empty-box svg {
+      opacity: 0.45;
+      margin-bottom: 8px;
+    }
+
+    /* ==========================================================================
+       ۶. بخش جمع‌بندی مالی و عملیات پایین فاکتور
+       ========================================================================== */
+    .summary-section {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr;
+      gap: 16px;
+      padding: 15px 18px;
+      background: var(--bg-subtle);
+      border-top: 1px solid var(--border-color);
+      align-items: stretch;
+    }
+
+    .panel-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 13px 15px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .discount-controls {
+      display: grid;
+      grid-template-columns: 135px 1fr;
+      gap: 8px;
+    }
+
+    .calc-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      padding: 2px 0;
+    }
+
+    .payable-card {
+      background: var(--payable-bg);
+      border: 1px solid var(--payable-border);
+      border-radius: var(--radius-sm);
+      padding: 11px 14px;
+    }
+
+    .payable-toman-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      color: var(--emerald-700);
+      font-weight: 800;
+      font-size: 1.15rem;
+    }
+    [data-theme="dark"] .payable-toman-row { color: #34d399; }
+
+    .payable-rial-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      color: var(--text-primary);
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px dashed var(--payable-border);
+    }
+
+    .payable-words-row {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--payable-border);
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--cyan-600);
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    [data-theme="dark"] .payable-words-row { color: #67e8f9; }
+
+    /* نوار عملیات پایین فاکتور */
+    .action-bar {
+      padding: 12px 18px;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .print-size-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .action-buttons {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* بج‌ها و وضعیت پرداخت */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-color);
+    }
+    .badge-paid { background: var(--emerald-50); color: var(--emerald-700); border-color: transparent; }
+    .badge-credit { background: var(--rose-50); color: var(--rose-600); border-color: transparent; }
+    .badge-info { background: var(--royal-50); color: var(--royal-600); border-color: transparent; }
+    [data-theme="dark"] .badge-paid { color: #34d399; }
+    [data-theme="dark"] .badge-credit { color: #fb7185; }
+    [data-theme="dark"] .badge-info { color: #60a5fa; }
+
+    /* ==========================================================================
+       ۷. مودال‌های GPU-Accelerated (سریع و نرم)
+       ========================================================================== */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(6, 15, 30, 0.62);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.16s ease;
+    }
+
+    .modal-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-dialog {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      width: 100%;
+      max-width: 460px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transform: translateY(12px) scale(0.98);
+      opacity: 0;
+      transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease;
+      will-change: transform, opacity;
+    }
+
+    .modal-backdrop.open .modal-dialog {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+
+    .modal-lg { max-width: 820px; }
+    .modal-xl { max-width: 960px; }
+
+    .modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: var(--bg-card);
+      flex-shrink: 0;
+    }
+
+    .modal-header h3 {
+      font-size: 1rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .modal-body {
+      padding: 16px 18px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .modal-footer {
+      padding: 12px 18px;
+      border-top: 1px solid var(--border-color);
+      background: var(--bg-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+
+    /* تب‌های داخل مودال خدمات */
+    .modal-tabs {
+      display: inline-flex;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      padding: 3px;
+      border-radius: var(--radius-sm);
+      gap: 4px;
+    }
+
+    .modal-tab-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-weight: 700;
+      font-size: 0.82rem;
+      padding: 6px 14px;
+      border-radius: var(--radius-xs);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background-color 0.14s ease, color 0.14s ease;
+    }
+
+    .modal-tab-btn.active {
+      background: var(--royal-600);
+      color: #ffffff;
+    }
+
+    /* فیلترهای دسته‌بندی در تب لیست خدمات */
+    .category-pills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .cat-pill {
+      border: 1px solid var(--border-strong);
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      padding: 4px 11px;
+      border-radius: 99px;
+      font-size: 0.77rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.13s ease;
+    }
+    .cat-pill:hover {
+      border-color: var(--royal-600);
+      color: var(--royal-600);
+    }
+    .cat-pill.active {
+      background: var(--royal-600);
+      border-color: var(--royal-600);
+      color: #ffffff;
+    }
+
+    /* گرید کارت‌های انتخاب خدمت */
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .service-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 13px;
+      border: 1.5px solid var(--border-color);
+      border-radius: var(--radius-md);
+      background: var(--bg-card);
+      cursor: pointer;
+      user-select: none;
+      transition: border-color 0.13s ease, background-color 0.13s ease, transform 0.12s ease;
+    }
+    .service-card:hover {
+      border-color: var(--royal-600);
+      background: var(--bg-subtle);
+    }
+    .service-card.selected {
+      background: var(--royal-50);
+      border-color: var(--royal-600);
+    }
+
+    .service-card-right {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .service-cb {
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      accent-color: var(--royal-600);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .service-name {
+      font-weight: 700;
+      font-size: 0.87rem;
+      color: var(--text-primary);
+      line-height: 1.35;
+    }
+
+    .service-desc {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .service-price-tag {
+      font-weight: 800;
+      font-size: 0.82rem;
+      color: var(--royal-600);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      padding: 4px 9px;
+      border-radius: var(--radius-xs);
+      white-space: nowrap;
+    }
+    [data-theme="dark"] .service-price-tag { color: #60a5fa; }
+
+    /* فرم انبار داخل مودال */
+    .inv-form-card {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .inv-form-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 0.9fr 1fr 1.2fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    /* کارت‌های آمار در مودال تاریخچه */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+    }
+
+    .stat-label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .stat-value {
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+    .stat-card.accent-emerald .stat-value { color: var(--emerald-600); }
+    .stat-card.accent-blue .stat-value { color: var(--royal-600); }
+    .stat-card.accent-cyan .stat-value { color: var(--cyan-600); }
+    [data-theme="dark"] .stat-card.accent-emerald .stat-value { color: #34d399; }
+    [data-theme="dark"] .stat-card.accent-blue .stat-value { color: #60a5fa; }
+    [data-theme="dark"] .stat-card.accent-cyan .stat-value { color: #22d3ee; }
+
+    /* دفتر نسیه */
+    .debt-form { display:grid; grid-template-columns: 1.2fr 1fr auto; gap:10px; align-items:end; margin-bottom:8px; }
+    .debt-amount-hint { font-size:0.76rem; color:var(--text-muted); min-height:18px; margin-bottom:10px; }
+    .debt-paid-row td { opacity:0.62; }
+    .debt-paid-row td:last-child { opacity:1; }
+    .debt-total-line { font-size:0.84rem; font-weight:700; color:var(--amber-600); margin-bottom:8px; min-height:20px; }
+    @media (max-width: 720px) { .debt-form { grid-template-columns: 1fr; } }
+
+    /* مودال تنظیمات و پشتیبان */
+    .settings-section {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .settings-section:last-child { margin-bottom: 0; }
+    .settings-title {
+      font-size: 0.88rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin-bottom: 10px;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* ==========================================================================
+       ۸. نوتیفیکیشن Toast (GPU-Accelerated)
+       ========================================================================== */
+    .toast-container {
+      position: fixed;
+      bottom: 18px;
+      left: 18px;
+      z-index: 250;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      pointer-events: auto;
+      padding: 10px 16px;
+      border-radius: var(--radius-sm);
+      background: var(--navy-900);
+      color: #ffffff;
+      font-size: 0.84rem;
+      font-weight: 600;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(10px);
+      opacity: 0;
+      animation: toastSlideIn 0.18s ease forwards;
+      will-change: transform, opacity;
+    }
+    .toast.success { background: var(--emerald-700); }
+    .toast.error { background: var(--rose-600); }
+    .toast.info { background: var(--navy-800); }
+
+    @keyframes toastSlideIn {
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* ==========================================================================
+       ۹. ناحیه اختصاصی چاپ رسمی (پشتیبانی کامل از A4، A5 و فیش‌پرینت 80mm)
+       ========================================================================== */
+    #print-area {
+      display: none;
+    }
+
+    .print-doc {
+      background: #ffffff;
+      color: #000000;
+      font-family: var(--font-main);
+      direction: rtl;
+    }
+
+    /* استایل چاپ A4 و A5 */
+    .print-doc.print-a4,
+    .print-doc.print-a5 {
+      width: 100%;
+    }
+
+    .print-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid #0b1f3a;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+      gap: 12px;
+    }
+
+    .print-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .print-logo {
+      width: 54px;
+      height: 54px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .print-logo img, .print-logo svg {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    .print-shop-name {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #0b1f3a;
+    }
+    .print-shop-info {
+      font-size: 0.78rem;
+      color: #475569;
+      margin-top: 2px;
+    }
+
+    .print-meta {
+      text-align: left;
+      font-size: 0.82rem;
+      line-height: 1.75;
+    }
+
+    .print-customer-bar {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 7px 12px;
+      margin-bottom: 12px;
+      font-size: 0.85rem;
+    }
+
+    .print-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 14px;
+      font-size: 0.84rem;
+    }
+    .print-table th, .print-table td {
+      border: 1px solid #94a3b8;
+      padding: 7px 9px;
+      text-align: right;
+    }
+    .print-table th {
+      background: #e2e8f0;
+      color: #0f172a;
+      font-weight: 700;
+    }
+    .print-table .center { text-align: center; }
+
+    .print-bottom-grid {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .print-words-box {
+      flex: 1;
+      border: 1px dashed #94a3b8;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.82rem;
+      line-height: 1.7;
+    }
+
+    .print-totals {
+      width: 320px;
+      border: 1.5px solid #0b1f3a;
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    .print-total-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 11px;
+      border-bottom: 1px solid #cbd5e1;
+    }
+    .print-total-row:last-child { border-bottom: none; }
+    .print-total-final {
+      background: #f1f5f9;
+      font-weight: 800;
+      color: #0b1f3a;
+      font-size: 0.92rem;
+    }
+
+    .print-signatures {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 26px;
+      padding: 0 24px;
+      font-size: 0.82rem;
+      color: #334155;
+    }
+
+    .print-footer-note {
+      margin-top: 16px;
+      padding-top: 8px;
+      border-top: 1px dashed #94a3b8;
+      text-align: center;
+      font-size: 0.78rem;
+      color: #475569;
+    }
+
+    /* فشرده‌سازی هوشمند برای چاپ A5 */
+    .print-doc.print-a5 { font-size: 12px; }
+    .print-doc.print-a5 .print-shop-name { font-size: 1.05rem; }
+    .print-doc.print-a5 .print-logo { width: 42px; height: 42px; }
+    .print-doc.print-a5 .print-table th,
+    .print-doc.print-a5 .print-table td { padding: 5px 6px; font-size: 0.78rem; }
+    .print-doc.print-a5 .print-totals { width: 250px; font-size: 0.78rem; }
+
+    /* استایل اختصاصی فیش‌پرینت 80mm */
+    .print-doc.print-80mm {
+      width: 74mm;
+      margin: 0 auto;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .print-doc.print-80mm .r80-header {
+      text-align: center;
+      border-bottom: 1.5px dashed #000;
+      padding-bottom: 6px;
+      margin-bottom: 6px;
+    }
+    .print-doc.print-80mm .r80-logo {
+      width: 38px;
+      height: 38px;
+      margin: 0 auto 4px;
+    }
+    .print-doc.print-80mm .r80-logo img,
+    .print-doc.print-80mm .r80-logo svg {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .print-doc.print-80mm .r80-title {
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .print-doc.print-80mm .r80-meta {
+      font-size: 10.5px;
+      margin-bottom: 6px;
+      border-bottom: 1px dashed #000;
+      padding-bottom: 5px;
+    }
+    .print-doc.print-80mm .r80-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .print-doc.print-80mm table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 6px;
+      font-size: 10.5px;
+    }
+    .print-doc.print-80mm th {
+      border-bottom: 1px solid #000;
+      padding: 3px 2px;
+      text-align: right;
+    }
+    .print-doc.print-80mm td {
+      border-bottom: 1px dotted #999;
+      padding: 4px 2px;
+    }
+    .print-doc.print-80mm .r80-totals {
+      border-top: 1.5px dashed #000;
+      padding-top: 5px;
+      margin-top: 4px;
+    }
+    .print-doc.print-80mm .r80-final {
+      font-size: 12.5px;
+      font-weight: 800;
+      margin-top: 3px;
+    }
+    .print-doc.print-80mm .r80-words {
+      font-size: 10px;
+      text-align: center;
+      margin-top: 5px;
+      padding: 4px;
+      border: 1px dashed #000;
+      border-radius: 4px;
+    }
+    .print-doc.print-80mm .r80-footer {
+      text-align: center;
+      margin-top: 8px;
+      padding-top: 5px;
+      border-top: 1px dashed #000;
+      font-size: 10px;
+    }
+
+    @media print {
+      body {
+        background: #ffffff !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .app-shell,
+      .modal-backdrop,
+      .toast-container {
+        display: none !important;
+      }
+      #print-area {
+        display: block !important;
+      }
+    }
+
+    /* ==========================================================================
+       ۱۰. واکنش‌گرایی (Responsive) برای تبلت و موبایل
+       ========================================================================== */
+    @media (max-width: 960px) {
+      .meta-grid { grid-template-columns: repeat(2, 1fr); }
+      .inv-form-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .topbar { padding: 10px 12px; }
+      .main-container { padding: 12px 10px 24px; }
+      .meta-grid,
+      .summary-section,
+      .stats-grid,
+      .settings-grid,
+      .inv-form-grid {
+        grid-template-columns: 1fr;
+      }
+      .services-grid { grid-template-columns: 1fr; }
+      .print-bottom-grid { flex-direction: column; }
+      .print-totals { width: 100%; }
+    }
+  </style>
+
+  <!-- استایل پویا برای تنظیم سایز صفحه پرینت (A4 / A5 / 80mm) -->
+  <style id="dynamic-print-page-style">
+    @page { size: A4 portrait; margin: 12mm; }
+  </style>
+  <style>
+    .modal-dialog, .toast { will-change: auto; }
+    .modal-backdrop.open .modal-dialog { will-change: auto; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+    @media screen and (min-width: 1200px) {
+      .main-container, .topbar-inner { max-width: 1440px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ======================================================================
+       پوسته اصلی برنامه
+       ====================================================================== -->
+  <div class="app-shell">
+    <!-- هدر بالا -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand-group">
+          <!-- لوگوی کلیک‌پذیر برای آپلود لوگوی اختصاصی -->
+          <div class="logo-trigger" id="logo-upload-trigger" title="برای تغییر لوگو کلیک کنید">
+            <div id="header-logo-holder" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;"></div>
+            <div class="logo-edit-hint">تغییر</div>
+          </div>
+          <input type="file" id="logo-file-input" accept="image/*" style="display:none;" />
+
+          <div class="brand-text">
+            <h1>کافی‌نت جوان</h1>
+            <div class="brand-sub">
+              <span id="header-jalali-date">...</span>
+              <span class="live-clock-pill num-tabular" title="ساعت زنده به وقت ایران">
+                <span class="live-dot"></span>
+                <span id="header-iran-clock">--:--:--</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- دکمه‌های منظم هدر -->
+        <nav class="header-nav" aria-label="منوی اصلی">
+          <button type="button" class="btn btn-sm btn-services open-services-trigger" title="باز کردن لیست خدمات و انبار (کلید F2)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            خدمات
+            <span class="kbd-hint">F2</span>
+          </button>
+
+          <button type="button" class="btn btn-sm btn-glass" id="btn-open-history">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            تاریخچه و آمار
+            <span class="pill-badge num-tabular" id="header-history-count">0</span>
+          </button>
+
+          <button type="button" class="btn btn-sm btn-glass" id="btn-open-debts" title="دفتر نسیه: چه کسی چقدر بدهکار است">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+            </svg>
+            دفتر نسیه
+            <span class="pill-badge num-tabular" id="header-debts-count">0</span>
+          </button>
+
+          <button type="button" class="btn btn-sm btn-glass" id="btn-open-settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            تنظیمات و پشتیبان
+          </button>
+
+          <button type="button" class="btn btn-glass btn-icon" id="btn-toggle-theme" title="تغییر تم شب / روز" aria-label="تغییر تم">
+            <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- فضای اصلی صدور فاکتور -->
+    <main class="main-container">
+      <section class="workspace-card">
+        <!-- نوار بالای کارت فاکتور -->
+        <div class="workspace-header">
+          <div class="workspace-title">
+            <h2>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+              صدور فاکتور فروش
+            </h2>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm btn-services open-services-trigger">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              انتخاب از خدمات
+            </button>
+            <button type="button" class="btn btn-sm btn-soft-blue" id="btn-add-custom-item" title="افزودن ردیف دلخواه بدون ثبت در انبار">
+              + آیتم آزاد
+            </button>
+          </div>
+        </div>
+
+        <!-- مشخصات فاکتور -->
+        <div class="meta-grid">
+          <div>
+            <label class="field-label" for="inv-customer">نام مشتری (اختیاری)</label>
+            <input type="text" id="inv-customer" class="input input-sm" placeholder="مثال: آقای رضایی / حضوری" />
+          </div>
+          <div>
+            <label class="field-label" for="inv-phone">شماره تماس (اختیاری)</label>
+            <input type="tel" id="inv-phone" class="input input-sm num-tabular" placeholder="0912..." style="direction:ltr; text-align:right;" />
+          </div>
+          <div>
+            <label class="field-label" for="inv-number">شماره فاکتور</label>
+            <input type="text" id="inv-number" class="input input-sm num-tabular" style="direction:ltr; text-align:right; font-weight:700;" />
+          </div>
+          <div>
+            <label class="field-label" for="inv-date">تاریخ شمسی</label>
+            <input type="text" id="inv-date" class="input input-sm num-tabular" style="direction:ltr; text-align:right; font-weight:600;" />
+          </div>
+          <div>
+            <label class="field-label" for="inv-payment-status">وضعیت پرداخت</label>
+            <select id="inv-payment-status" class="select input-sm">
+              <option value="پرداخت شده">پرداخت شده</option>
+              <option value="کارتخوان">کارتخوان</option>
+              <option value="نقدی">نقدی</option>
+              <option value="کارت‌به‌کارت">کارت‌به‌کارت</option>
+              <option value="نسیه">نسیه</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- جدول اقلام فاکتور -->
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:52px; text-align:center;">ردیف</th>
+                <th>شرح خدمت / کالا</th>
+                <th style="width:145px;">قیمت واحد (تومان)</th>
+                <th style="width:128px; text-align:center;">تعداد</th>
+                <th style="width:145px;">جمع ردیف (تومان)</th>
+                <th style="width:56px; text-align:center;">حذف</th>
+              </tr>
+            </thead>
+            <tbody id="invoice-tbody">
+              <!-- ردیف‌های فاکتور اینجا رندر می‌شوند -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- تخفیف و محاسبات نهایی (تومان، ریال و حروف فارسی) -->
+        <div class="summary-section">
+          <div class="panel-box">
+            <div>
+              <label class="field-label" for="inv-discount-value">تخفیف فاکتور (اختیاری)</label>
+              <div class="discount-controls">
+                <select id="inv-discount-type" class="select input-sm">
+                  <option value="amount">مبلغی (تومان)</option>
+                  <option value="percent">درصدی (%)</option>
+                </select>
+                <input type="number" id="inv-discount-value" class="input input-sm num-tabular" min="0" value="0" placeholder="0" style="direction:ltr; text-align:left;" />
+              </div>
+            </div>
+            <div style="font-size:0.77rem; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px dashed var(--border-color);">
+              <span>تعداد کل اقلام فاکتور:</span>
+              <strong id="summary-items-count" class="num-tabular" style="color:var(--text-primary);">0 ردیف (0 عدد)</strong>
+            </div>
+          </div>
+
+          <div class="panel-box" style="gap:8px;">
+            <div>
+              <div class="calc-row">
+                <span>جمع کل اقلام:</span>
+                <strong id="summary-subtotal" class="num-tabular">0 تومان</strong>
+              </div>
+              <div class="calc-row" id="summary-discount-row" style="color:var(--rose-600); display:none;">
+                <span>مبلغ تخفیف:</span>
+                <strong id="summary-discount" class="num-tabular">0 تومان</strong>
+              </div>
+            </div>
+
+            <div class="payable-card">
+              <div class="payable-toman-row">
+                <span>قابل پرداخت (تومان):</span>
+                <span id="summary-final-toman" class="num-tabular">0 تومان</span>
+              </div>
+              <div class="payable-rial-row">
+                <span>معادل به ریال:</span>
+                <span id="summary-final-rial" class="num-tabular">0 ریال</span>
+              </div>
+              <div class="payable-words-row">
+                <span style="opacity:0.75; white-space:nowrap;">به حروف:</span>
+                <span id="summary-final-words">صفر تومان</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- نوار عملیات پایین فاکتور -->
+        <div class="action-bar">
+          <div class="print-size-group">
+            <label for="print-size-select" style="font-size:0.8rem; font-weight:700; color:var(--text-secondary);">سایز چاپ:</label>
+            <select id="print-size-select" class="select input-sm" style="width:165px;">
+              <option value="a4">A4 رسمی (تمام‌برگ)</option>
+              <option value="a5">A5 نیم‌برگ</option>
+              <option value="80mm">فیش‌پرینت 80mm</option>
+            </select>
+          </div>
+
+          <div class="action-buttons">
+            <button type="button" class="btn btn-outline" id="btn-new-invoice">
+              فاکتور جدید
+            </button>
+            <button type="button" class="btn btn-emerald" id="btn-save-invoice">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              ذخیره در تاریخچه
+            </button>
+            <button type="button" class="btn btn-navy" id="btn-print-invoice">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                <rect x="6" y="14" width="12" height="8"></rect>
+              </svg>
+              چاپ فاکتور
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ======================================================================
+       مودال ۱: خدمات (دارای ۲ تب داخلی: لیست خدمات + انبار)
+       ====================================================================== -->
+  <div class="modal-backdrop" id="services-modal" role="dialog" aria-modal="true" aria-labelledby="services-modal-title">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <h3 id="services-modal-title">خدمات کافی‌نت جوان</h3>
+          <div class="modal-tabs" role="tablist">
+            <button type="button" class="modal-tab-btn active" data-srv-tab="list" role="tab">
+              لیست خدمات
+            </button>
+            <button type="button" class="modal-tab-btn" data-srv-tab="inventory" role="tab">
+              انبار (مدیریت خدمات)
+            </button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-xs btn-outline" data-close-modal="services-modal">بستن ✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- تب اول: لیست خدمات جهت انتخاب و افزودن به فاکتور -->
+        <div id="srv-panel-list">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div class="search-box" style="flex:1; min-width:220px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" id="srv-list-search" class="input input-sm" placeholder="جستجوی سریع خدمت..." autocomplete="off" />
+            </div>
+            <button type="button" class="btn btn-xs btn-outline" id="btn-clear-srv-picks" style="display:none;">
+              پاک کردن انتخاب‌ها
+            </button>
+          </div>
+
+          <div class="category-pills" id="srv-category-pills">
+            <!-- فیلترهای دسته‌بندی اینجا رندر می‌شوند -->
+          </div>
+
+          <div class="services-grid" id="srv-pick-grid">
+            <!-- کارت‌های خدمات با چک‌باکس اینجا رندر می‌شوند -->
+          </div>
+        </div>
+
+        <!-- تب دوم: انبار (افزودن، ویرایش و حذف خدمات) -->
+        <div id="srv-panel-inventory" style="display:none;">
+          <div class="inv-form-card">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+              <strong id="inv-form-title" style="font-size:0.86rem; color:var(--text-primary);">افزودن خدمت جدید به انبار</strong>
+              <button type="button" class="btn btn-xs btn-outline" id="btn-inv-cancel-edit" style="display:none;">انصراف از ویرایش</button>
+            </div>
+            <form id="inventory-form" class="inv-form-grid">
+              <input type="hidden" id="inv-edit-id" value="" />
+              <div>
+                <label class="field-label" for="inv-name">نام خدمت / کالا *</label>
+                <input type="text" id="inv-name" class="input input-sm" placeholder="مثال: پرینت رنگی A4" required />
+              </div>
+              <div>
+                <label class="field-label" for="inv-price">قیمت (تومان) *</label>
+                <input type="number" id="inv-price" class="input input-sm num-tabular" min="0" step="500" placeholder="12000" style="direction:ltr; text-align:left;" required />
+              </div>
+              <div>
+                <label class="field-label" for="inv-category">دسته‌بندی</label>
+                <select id="inv-category" class="select input-sm">
+                  <option value="چاپ و اسکن">چاپ و اسکن</option>
+                  <option value="خدمات اینترنتی">خدمات اینترنتی</option>
+                  <option value="بانکی و چک">بانکی و چک</option>
+                  <option value="ثبت‌نام و اداری">ثبت‌نام و اداری</option>
+                  <option value="سایر">سایر</option>
+                </select>
+              </div>
+              <div>
+                <label class="field-label" for="inv-desc">توضیح کوتاه (اختیاری)</label>
+                <input type="text" id="inv-desc" class="input input-sm" placeholder="مثال: یک‌رو / دورو" />
+              </div>
+              <div>
+                <button type="submit" class="btn btn-sm btn-primary" id="btn-inv-submit" style="width:100%; height:34px;">
+                  ذخیره
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; flex-wrap:wrap;">
+            <strong style="font-size:0.84rem; color:var(--text-secondary);">اقلام ذخیره‌شده در انبار (<span id="inv-total-count" class="num-tabular">0</span> مورد)</strong>
+            <div class="search-box" style="width:230px; max-width:100%;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" id="inv-table-search" class="input input-sm" placeholder="جستجو در انبار..." autocomplete="off" />
+            </div>
+          </div>
+
+          <div class="table-wrap" style="max-height:290px; border:1px solid var(--border-color); border-radius:var(--radius-sm);">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:44px; text-align:center;">#</th>
+                  <th>نام خدمت</th>
+                  <th>دسته‌بندی</th>
+                  <th>قیمت (تومان)</th>
+                  <th style="width:120px; text-align:center;">عملیات</th>
+                </tr>
+              </thead>
+              <tbody id="inv-table-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" id="services-modal-footer">
+        <div style="font-size:0.85rem; color:var(--text-secondary);">
+          موارد تیک‌خورده: <strong id="srv-selected-count" class="num-tabular" style="color:var(--royal-600);">0</strong> مورد
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" data-close-modal="services-modal">انصراف</button>
+          <button type="button" class="btn btn-emerald" id="btn-confirm-services">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            تایید و افزودن به فاکتور
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       مودال ۲: تاریخچه و آمار سریع
+       ====================================================================== -->
+  <div class="modal-backdrop" id="history-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-header">
+        <h3 id="history-modal-title">تاریخچه فاکتورها و آمار فروش</h3>
+        <button type="button" class="btn btn-xs btn-outline" data-close-modal="history-modal">بستن ✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- ۳ کارت آمار سریع -->
+        <div class="stats-grid">
+          <div class="stat-card accent-emerald">
+            <div class="stat-label">دریافتی امروز (پرداخت‌شده)</div>
+            <div class="stat-value num-tabular" id="stat-today-sales">0 تومان</div>
+          </div>
+          <div class="stat-card accent-blue">
+            <div class="stat-label">تعداد فاکتورهای امروز</div>
+            <div class="stat-value num-tabular" id="stat-today-count">0 فاکتور</div>
+          </div>
+          <div class="stat-card accent-cyan">
+            <div class="stat-label">کل فروش ثبت‌شده</div>
+            <div class="stat-value num-tabular" id="stat-total-sales">0 تومان</div>
+          </div>
+          <div class="stat-card accent-credit">
+            <div class="stat-label">مجموع نسیه (طلب)</div>
+            <div class="stat-value num-tabular" id="stat-credit-total" style="color:var(--amber-600);">0 تومان</div>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+          <div class="search-box" style="max-width:320px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="history-search" class="input input-sm" placeholder="جستجو با نام مشتری یا شماره فاکتور..." autocomplete="off" />
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" id="btn-export-csv-quick">
+            خروجی اکسل (CSV فارسی)
+          </button>
+        </div>
+
+        <div class="table-wrap" style="max-height:360px; border:1px solid var(--border-color); border-radius:var(--radius-sm);">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>شماره</th>
+                <th>مشتری</th>
+                <th>تاریخ</th>
+                <th>وضعیت</th>
+                <th>مبلغ (تومان)</th>
+                <th style="width:190px; text-align:center;">عملیات</th>
+              </tr>
+            </thead>
+            <tbody id="history-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       مودال ۳: تنظیمات و پشتیبان‌گیری
+       ====================================================================== -->
+  <div class="modal-backdrop" id="debts-modal" role="dialog" aria-modal="true" aria-labelledby="debts-modal-title">
+    <div class="modal-dialog modal-xl" style="max-width:760px;">
+      <div class="modal-header">
+        <h3 id="debts-modal-title">دفتر نسیه</h3>
+        <button type="button" class="btn btn-xs btn-outline" data-close-modal="debts-modal">بستن ✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="stats-grid">
+          <div class="stat-card accent-blue">
+            <div class="stat-label">جمع نسیه‌های باز</div>
+            <div class="stat-value num-tabular" id="debt-stat-total" style="color:var(--amber-600);">0 تومان</div>
+          </div>
+          <div class="stat-card accent-cyan">
+            <div class="stat-label">تعداد حساب باز</div>
+            <div class="stat-value num-tabular" id="debt-stat-count">0 مورد</div>
+          </div>
+        </div>
+
+        <form id="debt-form" class="debt-form" autocomplete="off">
+          <div>
+            <label class="field-label" for="debt-name">نام خانوادگی</label>
+            <input type="text" id="debt-name" class="input input-sm" maxlength="40" placeholder="مثلاً احمدی" />
+          </div>
+          <div>
+            <label class="field-label" for="debt-amount">مبلغ (تومان)</label>
+            <input type="text" id="debt-amount" class="input input-sm num-tabular" inputmode="numeric" placeholder="مثلاً 50000" style="direction:ltr; text-align:right;" />
+          </div>
+          <button type="submit" class="btn btn-sm btn-emerald">ثبت نسیه</button>
+        </form>
+        <div class="debt-amount-hint" id="debt-amount-hint"></div>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+          <div style="display:flex; gap:6px;">
+            <button type="button" class="cat-pill active" data-debt-tab="open">نسیه‌های باز</button>
+            <button type="button" class="cat-pill" data-debt-tab="paid">پرداخت‌شده‌ها</button>
+          </div>
+          <div class="search-box" style="max-width:260px;">
+            <input type="text" id="debt-search" class="input input-sm" placeholder="جستجوی نام..." autocomplete="off" />
+          </div>
+        </div>
+        <div class="debt-total-line" id="debt-search-total"></div>
+
+        <div class="table-wrap" style="max-height:340px; border:1px solid var(--border-color); border-radius:var(--radius-sm);">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>نام خانوادگی</th>
+                <th>مبلغ (تومان)</th>
+                <th id="debt-date-th">تاریخ</th>
+                <th style="width:170px; text-align:center;">عملیات</th>
+              </tr>
+            </thead>
+            <tbody id="debt-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+    <div class="modal-dialog modal-lg" style="max-width:640px;">
+      <div class="modal-header">
+        <h3 id="settings-modal-title">تنظیمات کافی‌نت و پشتیبان‌گیری</h3>
+        <button type="button" class="btn btn-xs btn-outline" data-close-modal="settings-modal">بستن ✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- مشخصات چاپی کافی‌نت -->
+        <div class="settings-section">
+          <div class="settings-title">مشخصات چاپی کافی‌نت جوان (نمایش در فاکتور چاپی)</div>
+          <div class="settings-grid">
+            <div>
+              <label class="field-label" for="set-phone">شماره تماس کافی‌نت</label>
+              <input type="text" id="set-phone" class="input input-sm num-tabular" placeholder="مثال: 021-12345678 / 0912..." style="direction:ltr; text-align:right;" />
+            </div>
+            <div>
+              <label class="field-label" for="set-footer-note">متن پاورقی فاکتور</label>
+              <input type="text" id="set-footer-note" class="input input-sm" placeholder="مثال: از اعتماد شما سپاسگزاریم" />
+            </div>
+            <div style="grid-column:1 / -1;">
+              <label class="field-label" for="set-address">آدرس کافی‌نت</label>
+              <input type="text" id="set-address" class="input input-sm" placeholder="مثال: خیابان اصلی، پلاک ۲۴، کافی‌نت جوان" />
+            </div>
+          </div>
+          <div style="margin-top:10px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="btn btn-xs btn-outline" id="btn-settings-upload-logo">آپلود لوگوی جدید</button>
+              <button type="button" class="btn btn-xs btn-soft-danger" id="btn-settings-reset-logo" style="display:none;">بازگشت به لوگوی پیش‌فرض</button>
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-save-settings">ذخیره تنظیمات</button>
+          </div>
+        </div>
+
+        <!-- پشتیبان‌گیری و خروجی اکسل -->
+        <div class="settings-section">
+          <div class="settings-title">پشتیبان‌گیری، بازیابی و خروجی اکسل</div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
+            تمامی اطلاعات به صورت خودکار در مرورگر ذخیره می‌شوند. برای انتقال به سیستم دیگر یا نگهداری امن، از فایل پشتیبان استفاده کنید.
+          </p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm btn-navy" id="btn-export-json">
+              دانلود پشتیبان (JSON)
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" id="btn-import-json">
+              بازیابی از فایل (JSON)
+            </button>
+            <button type="button" class="btn btn-sm btn-emerald" id="btn-export-csv">
+              خروجی اکسل تاریخچه (CSV فارسی)
+            </button>
+            <input type="file" id="import-json-input" accept="application/json,.json" style="display:none;" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       مودال ۴: تاییدیه (جایگزین استاندارد confirm)
+       ====================================================================== -->
+  <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true">
+    <div class="modal-dialog" style="max-width:410px;">
+      <div class="modal-header">
+        <h3 id="confirm-title">تایید عملیات</h3>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message" style="color:var(--text-secondary); font-size:0.88rem;"></p>
+      </div>
+      <div class="modal-footer" style="justify-content:flex-end;">
+        <button type="button" class="btn btn-sm btn-outline" id="confirm-cancel">انصراف</button>
+        <button type="button" class="btn btn-sm btn-danger" id="confirm-ok">تایید</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- کانتینر Toast -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  <!-- ناحیه اختصاصی چاپ -->
+  <div id="print-area"></div>
+
+  <script>
+    /**
+     * =========================================================================
+     * سامانه هوشمند حسابداری و صدور فاکتور «کافی‌نت جوان»
+     * Vanilla JavaScript خالص - بدون کتابخانه خارجی - سرعت اجرا زیر ۵۰ میلی‌ثانیه
+     * =========================================================================
+     */
+    (function () {
+      'use strict';
+
+      /* -----------------------------------------------------------------------
+         ۱. کلیدهای LocalStorage و مقادیر پیش‌فرض
+         ----------------------------------------------------------------------- */
+      const KEYS = {
+        SERVICES: 'javan_acc_services_v2',
+        INVOICES: 'javan_acc_invoices_v2',
+        NEXT_NUM: 'javan_acc_next_num_v2',
+        LOGO:     'javan_acc_logo_v2',
+        SETTINGS: 'javan_acc_settings_v2',
+        THEME:    'javan_acc_theme_v2',
+        DEBTS:    'javan_acc_debts_v1'
+      };
+
+      const CATEGORIES = ['همه', 'چاپ و اسکن', 'خدمات اینترنتی', 'بانکی و چک', 'ثبت‌نام و اداری', 'سایر'];
+
+      const DEFAULT_SERVICES = [
+        { id: 'srv-1', name: 'پرینت سیاه‌وسفید', price: 4000, category: 'چاپ و اسکن', desc: 'برگ A4 یک‌رو' },
+        { id: 'srv-2', name: 'پرینت رنگی', price: 12000, category: 'چاپ و اسکن', desc: 'کیفیت بالا A4' },
+        { id: 'srv-3', name: 'اسکن و ارسال فایل', price: 5000, category: 'چاپ و اسکن', desc: 'ارسال به ایتا/تلگرام/ایمیل' },
+        { id: 'srv-4', name: 'ثبت و انتقال چک صیادی', price: 35000, category: 'بانکی و چک', desc: 'ثبت، تایید یا انتقال' },
+        { id: 'srv-5', name: 'صدور گواهی کد پستی', price: 45000, category: 'ثبت‌نام و اداری', desc: 'سامانه شرکت ملی پست' },
+        { id: 'srv-6', name: 'ثبت‌نام کنکور / آزمون', price: 120000, category: 'ثبت‌نام و اداری', desc: 'ثبت‌نام کامل و پرینت رسید' },
+        { id: 'srv-7', name: 'تایپ و صفحه‌آرایی', price: 25000, category: 'خدمات اینترنتی', desc: 'هر صفحه استاندارد' },
+        { id: 'srv-8', name: 'خدمات سیم‌کارت رایتل / آپتل', price: 40000, category: 'خدمات اینترنتی', desc: 'فعال‌سازی و امور مشترکین' }
+      ];
+
+      const DEFAULT_SETTINGS = {
+        phone: '',
+        address: '',
+        footerNote: 'از اعتماد و همراهی شما سپاسگزاریم — کافی‌نت جوان'
+      };
+
+      // لوگوی برداری SVG مدرن و اختصاصی «کافی‌نت جوان»
+      const DEFAULT_LOGO_SVG = `
+        <svg viewBox="0 0 64 64" width="38" height="38" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="لوگوی کافی‌نت جوان">
+          <defs>
+            <linearGradient id="jvnGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#2563eb"/>
+              <stop offset="100%" stop-color="#06b6d4"/>
+            </linearGradient>
+          </defs>
+          <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#jvnGrad)"/>
+          <rect x="13" y="15" width="38" height="24" rx="5" fill="#07172c" fill-opacity="0.35" stroke="#ffffff" stroke-width="2.6"/>
+          <path d="M22 47H42" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round"/>
+          <path d="M32 39V47" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round"/>
+          <circle cx="32" cy="27" r="4.5" fill="#34d399"/>
+          <path d="M23 27C23 22.03 27.03 18 32 18" stroke="#bae6fd" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      `;
+
+      /* -----------------------------------------------------------------------
+         ۲. وضعیت برنامه (Application State)
+         ----------------------------------------------------------------------- */
+      const state = {
+        services: [],
+        invoices: [],
+        debts: [],
+        debtTab: 'open',
+        nextInvoiceNumber: 1001,
+        customLogo: null,
+        settings: { ...DEFAULT_SETTINGS },
+        theme: 'light',
+        activeCategory: 'همه',
+        modalSelectedIds: new Set(),
+        invoice: {
+          items: [], // [{ serviceId, name, price, qty }]
+          customerName: '',
+          customerPhone: '',
+          invoiceNumber: '1001',
+          editingId: null,
+          date: '',
+          paymentStatus: 'پرداخت شده',
+          discountType: 'amount',
+          discountValue: 0
+        }
+      };
+
+      /* -----------------------------------------------------------------------
+         ۳. توابع کمکی: تاریخ شمسی، ساعت زنده ایران، تبدیل عدد به حروف فارسی
+         ----------------------------------------------------------------------- */
+      function gregorianToJalali(gy, gm, gd) {
+        const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+        const gy2 = gm > 2 ? gy + 1 : gy;
+        let days = 355666 + (365 * gy) + Math.floor((gy2 + 3) / 4) - Math.floor((gy2 + 99) / 100) + Math.floor((gy2 + 399) / 400) + gd + g_d_m[gm - 1];
+        let jy = -1595 + (33 * Math.floor(days / 12053));
+        days %= 12053;
+        jy += 4 * Math.floor(days / 1461);
+        days %= 1461;
+        if (days > 365) {
+          jy += Math.floor((days - 1) / 365);
+          days = (days - 1) % 365;
+        }
+        const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
+        const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
+        return { jy, jm, jd };
+      }
+
+      function getTodayJalali() {
+        const now = new Date();
+        const { jy, jm, jd } = gregorianToJalali(now.getFullYear(), now.getMonth() + 1, now.getDate());
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${jy}/${pad(jm)}/${pad(jd)}`;
+      }
+
+      function getFullJalaliHeaderLabel() {
+        const now = new Date();
+        const days = ['یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه', 'شنبه'];
+        const months = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+        const { jy, jm, jd } = gregorianToJalali(now.getFullYear(), now.getMonth() + 1, now.getDate());
+        return `${days[now.getDay()]}، ${jd} ${months[jm - 1]} ${jy}`;
+      }
+
+      function updateIranClock() {
+        const clockEl = document.getElementById('header-iran-clock');
+        if (!clockEl) return;
+        try {
+          const formatter = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Asia/Tehran',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          });
+          clockEl.textContent = formatter.format(new Date());
+        } catch (err) {
+          // فالبک آفلاین UTC+3:30
+          const now = new Date();
+          const iranMs = now.getTime() + (now.getTimezoneOffset() * 60000) + (3.5 * 3600000);
+          const d = new Date(iranMs);
+          const pad = (n) => String(n).padStart(2, '0');
+          clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+      }
+
+      /**
+       * تبدیل دقیق عدد صحیح به حروف فارسی (تا تریلیون)
+       */
+      function numberToPersianWords(input) {
+        const num = Math.floor(Math.abs(Number(input) || 0));
+        if (num === 0) return 'صفر';
+
+        const ones = ['', 'یک', 'دو', 'سه', 'چهار', 'پنج', 'شش', 'هفت', 'هشت', 'نه'];
+        const teens = ['ده', 'یازده', 'دوازده', 'سیزده', 'چهارده', 'پانزده', 'شانزده', 'هفده', 'هجده', 'نوزده'];
+        const tens = ['', '', 'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 'هفتاد', 'هشتاد', 'نود'];
+        const hundreds = ['', 'صد', 'دویست', 'سیصد', 'چهارصد', 'پانصد', 'ششصد', 'هفتصد', 'هشتصد', 'نهصد'];
+        const scales = ['', 'هزار', 'میلیون', 'میلیارد', 'تریلیون'];
+
+        function threeDigitsToWords(n) {
+          const parts = [];
+          const h = Math.floor(n / 100);
+          const rem = n % 100;
+          if (h > 0) parts.push(hundreds[h]);
+          if (rem >= 10 && rem <= 19) {
+            parts.push(teens[rem - 10]);
+          } else {
+            const t = Math.floor(rem / 10);
+            const o = rem % 10;
+            if (t > 0) parts.push(tens[t]);
+            if (o > 0) parts.push(ones[o]);
+          }
+          return parts.join(' و ');
+        }
+
+        const chunks = [];
+        let temp = num;
+        let scaleIndex = 0;
+
+        while (temp > 0 && scaleIndex < scales.length) {
+          const chunk = temp % 1000;
+          if (chunk > 0) {
+            const words = threeDigitsToWords(chunk);
+            const scale = scales[scaleIndex];
+            chunks.unshift(scale ? `${words} ${scale}` : words);
+          }
+          temp = Math.floor(temp / 1000);
+          scaleIndex++;
+        }
+
+        return chunks.join(' و ');
+      }
+
+      /* اعداد فارسی/عربی -> انگلیسی */
+      function toEnDigits(str) {
+        return String(str ?? '')
+          .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776))
+          .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632));
+      }
+
+      /* یکسان‌سازی تاریخ شمسی به قالب YYYY/MM/DD (در صورت نامعتبر بودن، همان ورودی برمی‌گردد) */
+      function normalizeJalaliDate(str) {
+        const raw = toEnDigits(str).trim();
+        const m = raw.match(/^(\d{4})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{1,2})$/);
+        if (!m) return raw;
+        const mo = Number(m[2]), da = Number(m[3]);
+        if (mo < 1 || mo > 12 || da < 1 || da > 31) return raw;
+        return `${m[1]}/${String(mo).padStart(2, '0')}/${String(da).padStart(2, '0')}`;
+      }
+
+      function isValidJalaliDate(str) {
+        return /^\d{4}\/\d{2}\/\d{2}$/.test(str);
+      }
+
+      /* بازمحاسبه مبالغ فاکتور از روی اقلام تا تاریخچه، چاپ و CSV همیشه با هم یکسان باشند */
+      function normalizeInvoice(inv) {
+        if (!inv || typeof inv !== 'object') return null;
+        inv.items = Array.isArray(inv.items) ? inv.items : [];
+        inv.date = normalizeJalaliDate(inv.date || '');
+        const t = computeTotals(inv.items, inv.discountType || 'amount', inv.discountValue || 0);
+        inv.subtotal = t.subtotal;
+        inv.discountAmount = t.discountAmount;
+        inv.finalToman = t.finalToman;
+        inv.finalRial = t.finalRial;
+        if (!inv.id) inv.id = generateId('inv');
+        return inv;
+      }
+
+      function debounce(fn, ms = 120) {
+        let timer;
+        return function (...args) {
+          clearTimeout(timer);
+          timer = setTimeout(() => fn.apply(this, args), ms);
+        };
+      }
+
+      function formatNumber(n) {
+        return Math.round(Number(n) || 0).toLocaleString('en-US');
+      }
+
+      function escapeHtml(str) {
+        return String(str ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function generateId(prefix) {
+        return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      }
+
+      /* -----------------------------------------------------------------------
+         ۴. Toast و مودال تاییدیه (بدون alert و confirm)
+         ----------------------------------------------------------------------- */
+      function showToast(msg, type = 'info') {
+        const box = document.getElementById('toast-container');
+        const el = document.createElement('div');
+        el.className = `toast ${type}`;
+        el.textContent = msg;
+        box.appendChild(el);
+        setTimeout(() => {
+          el.style.transition = 'opacity 0.18s ease, transform 0.18s ease';
+          el.style.opacity = '0';
+          el.style.transform = 'translateY(8px)';
+          setTimeout(() => el.remove(), 200);
+        }, 2800);
+      }
+
+      let pendingConfirmAction = null;
+      function openConfirm(title, message, onOk, okLabel = 'تایید') {
+        document.getElementById('confirm-title').textContent = title;
+        document.getElementById('confirm-message').textContent = message;
+        document.getElementById('confirm-ok').textContent = okLabel;
+        pendingConfirmAction = onOk;
+        document.getElementById('confirm-modal').classList.add('open');
+      }
+
+      function closeConfirm() {
+        document.getElementById('confirm-modal').classList.remove('open');
+        pendingConfirmAction = null;
+      }
+
+      /* -----------------------------------------------------------------------
+         ۵. مدیریت LocalStorage و تم شب/روز
+         ----------------------------------------------------------------------- */
+      function loadStorage() {
+        try {
+          const rawServices = localStorage.getItem(KEYS.SERVICES);
+          if (rawServices) {
+            const parsed = JSON.parse(rawServices);
+            state.services = Array.isArray(parsed) && parsed.length > 0 ? parsed : [...DEFAULT_SERVICES];
+          } else {
+            state.services = [...DEFAULT_SERVICES];
+            saveServices();
+          }
+
+          const rawInvoices = localStorage.getItem(KEYS.INVOICES);
+          if (rawInvoices) {
+            const parsedInv = JSON.parse(rawInvoices);
+            state.invoices = Array.isArray(parsedInv) ? parsedInv.map(normalizeInvoice).filter(Boolean) : [];
+          }
+
+          const rawDebts = localStorage.getItem(KEYS.DEBTS);
+          if (rawDebts) {
+            const pd = JSON.parse(rawDebts);
+            state.debts = Array.isArray(pd) ? pd.filter(d => d && d.id) : [];
+          }
+
+          const rawNext = localStorage.getItem(KEYS.NEXT_NUM);
+          if (rawNext && !isNaN(Number(rawNext))) {
+            state.nextInvoiceNumber = Number(rawNext);
+          }
+
+          const rawLogo = localStorage.getItem(KEYS.LOGO);
+          if (rawLogo) state.customLogo = rawLogo;
+
+          const rawSettings = localStorage.getItem(KEYS.SETTINGS);
+          if (rawSettings) {
+            state.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(rawSettings) };
+          }
+
+          const savedTheme = localStorage.getItem(KEYS.THEME);
+          if (savedTheme === 'dark' || savedTheme === 'light') {
+            state.theme = savedTheme;
+          }
+        } catch (err) {
+          console.error('Storage read error:', err);
+          state.services = [...DEFAULT_SERVICES];
+        }
+      }
+
+      function saveServices() {
+        try {
+          localStorage.setItem(KEYS.SERVICES, JSON.stringify(state.services));
+        } catch (err) {
+          showToast('فضای ذخیره‌سازی مرورگر پر شده است.', 'error');
+        }
+      }
+
+      function saveInvoices() {
+        try {
+          localStorage.setItem(KEYS.INVOICES, JSON.stringify(state.invoices));
+          localStorage.setItem(KEYS.NEXT_NUM, String(state.nextInvoiceNumber));
+          document.getElementById('header-history-count').textContent = state.invoices.length;
+        } catch (err) {
+          showToast('خطا در ذخیره تاریخچه فاکتورها.', 'error');
+        }
+      }
+
+      function saveDebts() {
+        try {
+          localStorage.setItem(KEYS.DEBTS, JSON.stringify(state.debts));
+        } catch (err) {
+          showToast('خطا در ذخیره دفتر نسیه.', 'error');
+        }
+        updateDebtBadge();
+      }
+
+      function updateDebtBadge() {
+        const el = document.getElementById('header-debts-count');
+        if (el) el.textContent = state.debts.filter(d => !d.paid).length;
+      }
+
+      function parseAmount(str) {
+        const n = Number(toEnDigits(str).replace(/[,،٬\s]/g, ''));
+        return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+      }
+
+      function renderDebtsModal() {
+        let openTotal = 0, openCount = 0;
+        for (let i = 0; i < state.debts.length; i++) {
+          if (!state.debts[i].paid) { openTotal += Number(state.debts[i].amount) || 0; openCount++; }
+        }
+        document.getElementById('debt-stat-total').textContent = `${formatNumber(openTotal)} تومان`;
+        document.getElementById('debt-stat-count').textContent = `${formatNumber(openCount)} مورد`;
+
+        document.querySelectorAll('#debts-modal [data-debt-tab]').forEach(b => {
+          b.classList.toggle('active', b.dataset.debtTab === state.debtTab);
+        });
+        const showPaid = state.debtTab === 'paid';
+        document.getElementById('debt-date-th').textContent = showPaid ? 'تاریخ پرداخت' : 'تاریخ ثبت';
+
+        const q = toEnDigits(document.getElementById('debt-search').value).trim().toLowerCase();
+        const list = state.debts.filter(d =>
+          !!d.paid === showPaid && (!q || String(d.name || '').toLowerCase().includes(q))
+        );
+
+        const totalLine = document.getElementById('debt-search-total');
+        if (q && list.length) {
+          const sum = list.reduce((a, d) => a + (Number(d.amount) || 0), 0);
+          totalLine.textContent = `جمع ${showPaid ? 'پرداخت‌شده' : 'نسیه باز'} برای «${document.getElementById('debt-search').value.trim()}»: ${formatNumber(sum)} تومان`;
+        } else {
+          totalLine.textContent = '';
+        }
+
+        const tbody = document.getElementById('debt-tbody');
+        if (list.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="4"><div class="empty-box" style="padding:24px;">${
+            showPaid ? 'هنوز نسیه‌ای تسویه نشده است.' : (q ? 'موردی پیدا نشد.' : 'نسیه بازی وجود ندارد. 👌')
+          }</div></td></tr>`;
+          return;
+        }
+
+        const LIMIT = 200;
+        tbody.innerHTML = list.slice(0, LIMIT).map(d => `
+          <tr class="${showPaid ? 'debt-paid-row' : ''}">
+            <td style="font-weight:700;">${escapeHtml(d.name)}</td>
+            <td class="num-tabular" style="font-weight:800; color:${showPaid ? 'var(--emerald-600)' : 'var(--amber-600)'};">${formatNumber(d.amount)}</td>
+            <td class="num-tabular" style="color:var(--text-secondary);">${escapeHtml(showPaid ? (d.paidDate || '') : (d.date || ''))}</td>
+            <td style="text-align:center;">
+              <div style="display:inline-flex; gap:5px;">
+                ${showPaid
+                  ? `<button type="button" class="btn btn-xs btn-outline" data-debt-act="reopen" data-id="${escapeHtml(d.id)}">برگشت</button>`
+                  : `<button type="button" class="btn btn-xs btn-emerald" data-debt-act="pay" data-id="${escapeHtml(d.id)}">پرداخت شد ✓</button>`}
+                <button type="button" class="btn btn-xs btn-soft-danger" data-debt-act="delete" data-id="${escapeHtml(d.id)}" title="حذف">✕</button>
+              </div>
+            </td>
+          </tr>
+        `).join('') + (list.length > LIMIT
+          ? `<tr><td colspan="4"><div class="empty-box" style="padding:10px;">برای دیدن بقیه نام را جستجو کنید.</div></td></tr>` : '');
+      }
+
+      function bindDebtEvents() {
+        const nameEl = document.getElementById('debt-name');
+        const amountEl = document.getElementById('debt-amount');
+        const hintEl = document.getElementById('debt-amount-hint');
+
+        document.getElementById('btn-open-debts').addEventListener('click', () => {
+          state.debtTab = 'open';
+          document.getElementById('debt-search').value = '';
+          renderDebtsModal();
+          document.getElementById('debts-modal').classList.add('open');
+          setTimeout(() => nameEl.focus(), 50);
+        });
+
+        amountEl.addEventListener('input', () => {
+          const n = parseAmount(amountEl.value);
+          hintEl.textContent = n ? `${formatNumber(n)} تومان — ${numberToPersianWords(n)} تومان` : '';
+        });
+
+        document.getElementById('debt-form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          const name = nameEl.value.trim().replace(/\s+/g, ' ');
+          const amount = parseAmount(amountEl.value);
+          if (!name) { showToast('نام خانوادگی را وارد کنید.', 'error'); nameEl.focus(); return; }
+          if (!amount) { showToast('مبلغ را درست وارد کنید.', 'error'); amountEl.focus(); return; }
+
+          state.debts.unshift({
+            id: generateId('debt'),
+            name,
+            amount,
+            date: getTodayJalali(),
+            paid: false,
+            paidDate: null,
+            createdAt: Date.now()
+          });
+          saveDebts();
+          nameEl.value = '';
+          amountEl.value = '';
+          hintEl.textContent = '';
+          state.debtTab = 'open';
+          renderDebtsModal();
+          nameEl.focus();
+          showToast(`نسیه «${name}» به مبلغ ${formatNumber(amount)} تومان ثبت شد.`, 'success');
+        });
+
+        document.querySelectorAll('#debts-modal [data-debt-tab]').forEach(b => {
+          b.addEventListener('click', () => { state.debtTab = b.dataset.debtTab; renderDebtsModal(); });
+        });
+        document.getElementById('debt-search').addEventListener('input', debounce(renderDebtsModal));
+
+        document.getElementById('debt-tbody').addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-debt-act]');
+          if (!btn) return;
+          const id = btn.dataset.id;
+          const d = state.debts.find(x => x.id === id);
+          if (!d) return;
+          const act = btn.dataset.debtAct;
+
+          if (act === 'pay') {
+            d.paid = true;
+            d.paidDate = getTodayJalali();
+            saveDebts();
+            renderDebtsModal();
+            showToast(`نسیه «${d.name}» پرداخت شد ✓`, 'success');
+          } else if (act === 'reopen') {
+            d.paid = false;
+            d.paidDate = null;
+            saveDebts();
+            renderDebtsModal();
+            showToast(`نسیه «${d.name}» دوباره باز شد.`, 'info');
+          } else if (act === 'delete') {
+            openConfirm('حذف نسیه', `نسیه «${d.name}» (${formatNumber(d.amount)} تومان) حذف شود؟`, () => {
+              state.debts = state.debts.filter(x => x.id !== id);
+              saveDebts();
+              renderDebtsModal();
+              showToast('نسیه حذف شد.', 'info');
+            }, 'حذف');
+          }
+        });
+      }
+
+      function saveSettings() {
+        try {
+          localStorage.setItem(KEYS.SETTINGS, JSON.stringify(state.settings));
+        } catch (err) {
+          showToast('خطا در ذخیره تنظیمات.', 'error');
+        }
+      }
+
+      function saveLogo(dataUrl) {
+        try {
+          if (dataUrl) {
+            localStorage.setItem(KEYS.LOGO, dataUrl);
+          } else {
+            localStorage.removeItem(KEYS.LOGO);
+          }
+          state.customLogo = dataUrl || null;
+          renderLogos();
+        } catch (err) {
+          showToast('حجم تصویر لوگو زیاد است و ذخیره نشد.', 'error');
+        }
+      }
+
+      function applyTheme(theme) {
+        state.theme = theme;
+        document.documentElement.setAttribute('data-theme', theme);
+        document.getElementById('theme-icon-sun').style.display = theme === 'dark' ? 'block' : 'none';
+        document.getElementById('theme-icon-moon').style.display = theme === 'light' ? 'block' : 'none';
+        try { localStorage.setItem(KEYS.THEME, theme); } catch (_) {}
+      }
+
+      function getLogoHtml() {
+        return state.customLogo
+          ? `<img src="${state.customLogo}" alt="لوگوی کافی‌نت جوان" />`
+          : DEFAULT_LOGO_SVG;
+      }
+
+      function renderLogos() {
+        document.getElementById('header-logo-holder').innerHTML = getLogoHtml();
+        document.getElementById('btn-settings-reset-logo').style.display = state.customLogo ? 'inline-flex' : 'none';
+      }
+
+      /* -----------------------------------------------------------------------
+         ۶. محاسبات مالی دقیق (تومان، ریال، حروف فارسی)
+         ----------------------------------------------------------------------- */
+      function computeTotals(items, discountType, discountValue) {
+        let subtotal = 0;
+        let totalQty = 0;
+
+        for (let i = 0; i < items.length; i++) {
+          const q = Math.max(0, Number(items[i].qty) || 0);
+          const p = Math.max(0, Number(items[i].price) || 0);
+          subtotal += q * p;
+          totalQty += q;
+        }
+
+        const rawDisc = Math.max(0, Number(discountValue) || 0);
+        let discountAmount = 0;
+        if (discountType === 'percent') {
+          discountAmount = Math.round((subtotal * Math.min(100, rawDisc)) / 100);
+        } else {
+          discountAmount = Math.min(subtotal, Math.round(rawDisc));
+        }
+
+        const finalToman = Math.max(0, subtotal - discountAmount);
+        const finalRial = finalToman * 10;
+        const wordsToman = `${numberToPersianWords(finalToman)} تومان`;
+
+        return { subtotal, totalQty, discountAmount, finalToman, finalRial, wordsToman };
+      }
+
+      /* -----------------------------------------------------------------------
+         ۷. رندر جدول فاکتور و خلاصه مالی
+         ----------------------------------------------------------------------- */
+      function renderInvoiceTable() {
+        const tbody = document.getElementById('invoice-tbody');
+        const items = state.invoice.items;
+
+        if (items.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="6">
+                <div class="empty-box">
+                  <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="12" y1="18" x2="12" y2="12"></line>
+                    <line x1="9" y1="15" x2="15" y2="15"></line>
+                  </svg>
+                  <p style="font-weight:700; color:var(--text-primary); margin-bottom:4px;">هنوز خدمتی به فاکتور اضافه نشده است</p>
+                  <p style="font-size:0.81rem; margin-bottom:12px;">دکمه <strong>«خدمات»</strong> (یا کلید <strong>F2</strong>) را بزنید یا از «+ آیتم آزاد» استفاده کنید.</p>
+                  <button type="button" class="btn btn-sm btn-services open-services-trigger">باز کردن لیست خدمات</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        } else {
+          tbody.innerHTML = items.map((item, idx) => {
+            const rowTotal = (Number(item.qty) || 0) * (Number(item.price) || 0);
+            return `
+              <tr data-idx="${idx}">
+                <td class="num-tabular" style="text-align:center; color:var(--text-muted); font-weight:700;">${idx + 1}</td>
+                <td>
+                  <input type="text" class="inline-text-input" data-inv-edit="name" data-idx="${idx}" value="${escapeHtml(item.name)}" placeholder="شرح خدمت..." />
+                </td>
+                <td>
+                  <input type="number" class="inline-price-input num-tabular" data-inv-edit="price" data-idx="${idx}" min="0" step="500" value="${item.price}" />
+                </td>
+                <td style="text-align:center;">
+                  <div class="qty-stepper">
+                    <button type="button" class="qty-btn" data-qty-act="inc" data-idx="${idx}" aria-label="افزایش">+</button>
+                    <input type="number" class="qty-val num-tabular" data-inv-edit="qty" data-idx="${idx}" min="1" value="${item.qty}" />
+                    <button type="button" class="qty-btn" data-qty-act="dec" data-idx="${idx}" aria-label="کاهش">−</button>
+                  </div>
+                </td>
+                <td class="num-tabular row-total-cell" style="font-weight:800; color:var(--text-primary);">
+                  ${formatNumber(rowTotal)}
+                </td>
+                <td style="text-align:center;">
+                  <button type="button" class="btn btn-xs btn-soft-danger" data-qty-act="remove" data-idx="${idx}" title="حذف ردیف">✕</button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+
+        updateSummaryDOM();
+      }
+
+      /* به‌روزرسانی سریع یک ردیف بدون ساخت مجدد کل جدول */
+      function updateRowDOM(idx) {
+        const row = document.querySelector(`#invoice-tbody tr[data-idx="${idx}"]`);
+        const item = state.invoice.items[idx];
+        if (!row || !item) return renderInvoiceTable();
+        const qtyInput = row.querySelector('[data-inv-edit="qty"]');
+        if (qtyInput) qtyInput.value = item.qty;
+        const cell = row.querySelector('.row-total-cell');
+        if (cell) cell.textContent = formatNumber((Number(item.qty) || 0) * (Number(item.price) || 0));
+        updateSummaryDOM();
+      }
+
+      function updateSummaryDOM() {
+        const t = computeTotals(state.invoice.items, state.invoice.discountType, state.invoice.discountValue);
+
+        document.getElementById('summary-items-count').textContent = `${state.invoice.items.length} ردیف (${formatNumber(t.totalQty)} عدد)`;
+        document.getElementById('summary-subtotal').textContent = `${formatNumber(t.subtotal)} تومان`;
+
+        const discRow = document.getElementById('summary-discount-row');
+        if (t.discountAmount > 0) {
+          discRow.style.display = 'flex';
+          document.getElementById('summary-discount').textContent = `${formatNumber(t.discountAmount)} − تومان`;
+        } else {
+          discRow.style.display = 'none';
+        }
+
+        document.getElementById('summary-final-toman').textContent = `${formatNumber(t.finalToman)} تومان`;
+        document.getElementById('summary-final-rial').textContent = `${formatNumber(t.finalRial)} ریال`;
+        document.getElementById('summary-final-words').textContent = t.wordsToman;
+      }
+
+      function resetInvoice(notify = false) {
+        state.invoice = {
+          items: [],
+          customerName: '',
+          customerPhone: '',
+          invoiceNumber: String(state.nextInvoiceNumber),
+          editingId: null,
+          date: getTodayJalali(),
+          paymentStatus: 'پرداخت شده',
+          discountType: 'amount',
+          discountValue: 0
+        };
+
+        document.getElementById('inv-customer').value = '';
+        document.getElementById('inv-phone').value = '';
+        document.getElementById('inv-number').value = state.invoice.invoiceNumber;
+        document.getElementById('inv-date').value = state.invoice.date;
+        document.getElementById('inv-payment-status').value = 'پرداخت شده';
+        document.getElementById('inv-discount-type').value = 'amount';
+        document.getElementById('inv-discount-value').value = '0';
+
+        renderInvoiceTable();
+        if (notify) showToast('فرم فاکتور جدید آماده شد.', 'info');
+      }
+
+      /* -----------------------------------------------------------------------
+         ۸. مودال خدمات و تب داخلی انبار
+         ----------------------------------------------------------------------- */
+      function openServicesModal(tab = 'list') {
+        state.modalSelectedIds.clear();
+        state.activeCategory = 'همه';
+        document.getElementById('srv-list-search').value = '';
+        switchServicesTab(tab);
+        renderCategoryPills();
+        renderServicesPickGrid();
+        renderInventoryTable();
+        document.getElementById('services-modal').classList.add('open');
+        setTimeout(() => {
+          if (tab === 'list') document.getElementById('srv-list-search').focus();
+        }, 50);
+      }
+
+      function closeModal(id) {
+        document.getElementById(id).classList.remove('open');
+        if (id === 'services-modal') resetInventoryForm();
+      }
+
+      function switchServicesTab(tab) {
+        document.querySelectorAll('#services-modal .modal-tab-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.srvTab === tab);
+        });
+        document.getElementById('srv-panel-list').style.display = tab === 'list' ? 'block' : 'none';
+        document.getElementById('srv-panel-inventory').style.display = tab === 'inventory' ? 'block' : 'none';
+        document.getElementById('services-modal-footer').style.display = tab === 'list' ? 'flex' : 'none';
+        if (tab === 'list') renderServicesPickGrid();
+        else renderInventoryTable();
+      }
+
+      function renderCategoryPills() {
+        const container = document.getElementById('srv-category-pills');
+        container.innerHTML = CATEGORIES.map(cat => `
+          <button type="button" class="cat-pill ${state.activeCategory === cat ? 'active' : ''}" data-cat="${escapeHtml(cat)}">
+            ${escapeHtml(cat)}
+          </button>
+        `).join('');
+      }
+
+      function renderServicesPickGrid() {
+        const grid = document.getElementById('srv-pick-grid');
+        const q = document.getElementById('srv-list-search').value.trim().toLowerCase();
+
+        const inInvCounts = new Map();
+        state.invoice.items.forEach(item => {
+          if (item.serviceId) inInvCounts.set(item.serviceId, item.qty);
+        });
+
+        const filtered = state.services.filter(srv => {
+          const catMatch = state.activeCategory === 'همه' || (srv.category || 'سایر') === state.activeCategory;
+          const textMatch = !q ||
+            srv.name.toLowerCase().includes(q) ||
+            (srv.category && srv.category.toLowerCase().includes(q)) ||
+            (srv.desc && srv.desc.toLowerCase().includes(q));
+          return catMatch && textMatch;
+        });
+
+        document.getElementById('srv-selected-count').textContent = state.modalSelectedIds.size;
+        document.getElementById('btn-clear-srv-picks').style.display = state.modalSelectedIds.size > 0 ? 'inline-flex' : 'none';
+
+        if (filtered.length === 0) {
+          grid.innerHTML = `
+            <div class="empty-box" style="grid-column:1/-1; padding:28px 10px;">
+              <p>خدمتی در این فیلتر یافت نشد. از تب <strong>«انبار»</strong> خدمت جدید اضافه کنید.</p>
+            </div>
+          `;
+          return;
+        }
+
+        grid.innerHTML = filtered.map(srv => {
+          const checked = state.modalSelectedIds.has(srv.id);
+          const curQty = inInvCounts.get(srv.id);
+          return `
+            <label class="service-card ${checked ? 'selected' : ''}">
+              <div class="service-card-right">
+                <input type="checkbox" class="service-cb" data-srv-id="${escapeHtml(srv.id)}" ${checked ? 'checked' : ''} />
+                <div style="min-width:0;">
+                  <div class="service-name">${escapeHtml(srv.name)}</div>
+                  ${srv.desc ? `<div class="service-desc">${escapeHtml(srv.desc)}</div>` : ''}
+                  <div style="display:flex; gap:5px; flex-wrap:wrap; margin-top:4px;">
+                    <span class="badge">${escapeHtml(srv.category || 'سایر')}</span>
+                    ${curQty ? `<span class="badge badge-paid">در فاکتور: ${curQty}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              <span class="service-price-tag num-tabular">${formatNumber(srv.price)} ت</span>
+            </label>
+          `;
+        }).join('');
+      }
+
+      function addSelectedServicesToInvoice() {
+        if (state.modalSelectedIds.size === 0) {
+          showToast('لطفاً حداقل یک خدمت را تیک بزنید.', 'error');
+          return;
+        }
+
+        let added = 0;
+        let updated = 0;
+
+        state.modalSelectedIds.forEach(id => {
+          const srv = state.services.find(s => s.id === id);
+          if (!srv) return;
+          const exist = state.invoice.items.find(i => i.serviceId === srv.id);
+          if (exist) {
+            exist.qty = (Number(exist.qty) || 1) + 1;
+            updated++;
+          } else {
+            state.invoice.items.push({
+              serviceId: srv.id,
+              name: srv.name,
+              price: Number(srv.price) || 0,
+              qty: 1
+            });
+            added++;
+          }
+        });
+
+        renderInvoiceTable();
+        closeModal('services-modal');
+
+        if (added > 0 && updated > 0) showToast(`${added} خدمت اضافه و تعداد ${updated} مورد افزایش یافت.`, 'success');
+        else if (added > 0) showToast(`${added} خدمت به فاکتور اضافه شد.`, 'success');
+        else if (updated > 0) showToast(`تعداد ${updated} خدمت در فاکتور افزایش یافت.`, 'success');
+      }
+
+      /* مدیریت انبار داخل مودال */
+      function renderInventoryTable() {
+        const tbody = document.getElementById('inv-table-tbody');
+        const q = document.getElementById('inv-table-search').value.trim().toLowerCase();
+        document.getElementById('inv-total-count').textContent = state.services.length;
+
+        const filtered = state.services.filter(srv =>
+          !q || srv.name.toLowerCase().includes(q) || (srv.category && srv.category.toLowerCase().includes(q))
+        );
+
+        if (filtered.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5"><div class="empty-box" style="padding:20px;">موردی یافت نشد.</div></td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = filtered.map((srv, idx) => `
+          <tr>
+            <td class="num-tabular" style="text-align:center; color:var(--text-muted);">${idx + 1}</td>
+            <td>
+              <div style="font-weight:700;">${escapeHtml(srv.name)}</div>
+              ${srv.desc ? `<div style="font-size:0.73rem; color:var(--text-muted);">${escapeHtml(srv.desc)}</div>` : ''}
+            </td>
+            <td><span class="badge">${escapeHtml(srv.category || 'سایر')}</span></td>
+            <td class="num-tabular" style="font-weight:700;">${formatNumber(srv.price)}</td>
+            <td style="text-align:center;">
+              <div style="display:inline-flex; gap:5px;">
+                <button type="button" class="btn btn-xs btn-outline" data-inv-act="edit" data-id="${escapeHtml(srv.id)}">ویرایش</button>
+                <button type="button" class="btn btn-xs btn-soft-danger" data-inv-act="delete" data-id="${escapeHtml(srv.id)}">حذف</button>
+              </div>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      function resetInventoryForm() {
+        document.getElementById('inv-edit-id').value = '';
+        document.getElementById('inv-name').value = '';
+        document.getElementById('inv-price').value = '';
+        document.getElementById('inv-category').value = 'چاپ و اسکن';
+        document.getElementById('inv-desc').value = '';
+        document.getElementById('inv-form-title').textContent = 'افزودن خدمت جدید به انبار';
+        document.getElementById('btn-inv-submit').textContent = 'ذخیره';
+        document.getElementById('btn-inv-cancel-edit').style.display = 'none';
+      }
+
+      /* -----------------------------------------------------------------------
+         ۹. مودال تاریخچه و آمار سریع
+         ----------------------------------------------------------------------- */
+      function renderHistoryModal() {
+        const today = getTodayJalali();
+        let todaySales = 0;
+        let todayCount = 0;
+        let totalSales = 0;
+        let creditTotal = 0;
+
+        for (let i = 0; i < state.invoices.length; i++) {
+          const inv = state.invoices[i];
+          const amount = Number(inv.finalToman) || 0;
+          const isCredit = inv.paymentStatus === 'نسیه';
+          totalSales += amount;
+          if (isCredit) creditTotal += amount;
+          if (inv.date === today) {
+            todayCount++;
+            if (!isCredit) todaySales += amount;
+          }
+        }
+
+        document.getElementById('stat-today-sales').textContent = `${formatNumber(todaySales)} تومان`;
+        document.getElementById('stat-today-count').textContent = `${formatNumber(todayCount)} فاکتور`;
+        document.getElementById('stat-total-sales').textContent = `${formatNumber(totalSales)} تومان`;
+        document.getElementById('stat-credit-total').textContent = `${formatNumber(creditTotal)} تومان`;
+
+        const q = document.getElementById('history-search').value.trim().toLowerCase();
+        const filtered = state.invoices.filter(inv =>
+          !q ||
+          String(inv.invoiceNumber || '').toLowerCase().includes(q) ||
+          String(inv.customerName || '').toLowerCase().includes(q) ||
+          String(inv.customerPhone || '').toLowerCase().includes(q)
+        );
+
+        const tbody = document.getElementById('history-tbody');
+        if (filtered.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6"><div class="empty-box" style="padding:26px;">فاکتوری در تاریخچه یافت نشد.</div></td></tr>`;
+          return;
+        }
+
+        const HISTORY_LIMIT = 150;
+        const shown = filtered.slice(0, HISTORY_LIMIT);
+        tbody.innerHTML = shown.map(inv => {
+          const status = inv.paymentStatus || 'پرداخت شده';
+          const badgeClass = status === 'نسیه' ? 'badge-credit' : 'badge-paid';
+          return `
+            <tr>
+              <td class="num-tabular" style="font-weight:800;">#${escapeHtml(inv.invoiceNumber)}</td>
+              <td>
+                <div style="font-weight:700;">${escapeHtml(inv.customerName || 'مشتری حضوری')}</div>
+                ${inv.customerPhone ? `<div class="num-tabular" style="font-size:0.74rem; color:var(--text-muted);">${escapeHtml(inv.customerPhone)}</div>` : ''}
+              </td>
+              <td class="num-tabular" style="color:var(--text-secondary);">${escapeHtml(inv.date)}</td>
+              <td><span class="badge ${badgeClass}">${escapeHtml(status)}</span></td>
+              <td class="num-tabular" style="font-weight:800; color:var(--emerald-600);">${formatNumber(inv.finalToman)} ت</td>
+              <td style="text-align:center;">
+                <div style="display:inline-flex; gap:5px;">
+                  <button type="button" class="btn btn-xs btn-outline" data-hist-act="load" data-id="${escapeHtml(inv.id)}" title="بارگذاری برای ویرایش">بارگذاری</button>
+                  <button type="button" class="btn btn-xs btn-soft-blue" data-hist-act="print" data-id="${escapeHtml(inv.id)}" title="چاپ مستقیم">چاپ</button>
+                  <button type="button" class="btn btn-xs btn-soft-danger" data-hist-act="delete" data-id="${escapeHtml(inv.id)}" title="حذف">✕</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('') + (filtered.length > HISTORY_LIMIT
+          ? `<tr><td colspan="6"><div class="empty-box" style="padding:12px;">${formatNumber(HISTORY_LIMIT)} مورد از ${formatNumber(filtered.length)} نمایش داده شد؛ برای یافتن بقیه جستجو کنید.</div></td></tr>`
+          : '');
+      }
+
+      /* -----------------------------------------------------------------------
+         ۱۰. چاپ حرفه‌ای با پشتیبانی از A4، A5 و فیش‌پرینت 80mm
+         ----------------------------------------------------------------------- */
+      function buildPrintHtml(inv, sizeMode) {
+        const t = computeTotals(inv.items || [], inv.discountType || 'amount', inv.discountValue || 0);
+        const shopPhone = state.settings.phone ? `تلفن: ${escapeHtml(state.settings.phone)}` : '';
+        const shopAddr = state.settings.address ? escapeHtml(state.settings.address) : '';
+        const footerNote = escapeHtml(state.settings.footerNote || DEFAULT_SETTINGS.footerNote);
+
+        // حالت فیش‌پرینت 80mm
+        if (sizeMode === '80mm') {
+          const rows = (inv.items || []).map(item => `
+            <tr>
+              <td>${escapeHtml(item.name)}</td>
+              <td style="text-align:center;" class="num-tabular">${formatNumber(item.qty)}</td>
+              <td style="text-align:left;" class="num-tabular">${formatNumber((Number(item.qty) || 0) * (Number(item.price) || 0))}</td>
+            </tr>
+          `).join('');
+
+          return `
+            <div class="print-doc print-80mm">
+              <div class="r80-header">
+                <div class="r80-logo">${getLogoHtml()}</div>
+                <div class="r80-title">کافی‌نت جوان</div>
+                ${shopPhone ? `<div class="num-tabular">${shopPhone}</div>` : ''}
+                ${shopAddr ? `<div>${shopAddr}</div>` : ''}
+              </div>
+              <div class="r80-meta">
+                <div class="r80-row"><span>شماره فاکتور:</span><strong class="num-tabular">#${escapeHtml(inv.invoiceNumber)}</strong></div>
+                <div class="r80-row"><span>تاریخ:</span><span class="num-tabular">${escapeHtml(inv.date)}</span></div>
+                <div class="r80-row"><span>مشتری:</span><span>${escapeHtml(inv.customerName || 'حضوری')}</span></div>
+                <div class="r80-row"><span>وضعیت:</span><strong>${escapeHtml(inv.paymentStatus || 'پرداخت شده')}</strong></div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>خدمت</th>
+                    <th style="text-align:center;">تعداد</th>
+                    <th style="text-align:left;">مبلغ(ت)</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+              <div class="r80-totals">
+                <div class="r80-row"><span>جمع کل:</span><span class="num-tabular">${formatNumber(t.subtotal)} ت</span></div>
+                ${t.discountAmount > 0 ? `<div class="r80-row"><span>تخفیف:</span><span class="num-tabular">${formatNumber(t.discountAmount)}− ت</span></div>` : ''}
+                <div class="r80-row r80-final"><span>قابل پرداخت:</span><span class="num-tabular">${formatNumber(t.finalToman)} تومان</span></div>
+                <div class="r80-row"><span>معادل ریال:</span><span class="num-tabular">${formatNumber(t.finalRial)} ریال</span></div>
+              </div>
+              <div class="r80-words">${escapeHtml(t.wordsToman)}</div>
+              <div class="r80-footer">${footerNote}</div>
+            </div>
+          `;
+        }
+
+        // حالت رسمی A4 و A5
+        const rows = (inv.items || []).map((item, idx) => `
+          <tr>
+            <td class="center num-tabular">${idx + 1}</td>
+            <td>${escapeHtml(item.name)}</td>
+            <td class="center num-tabular">${formatNumber(item.qty)}</td>
+            <td class="center num-tabular">${formatNumber(item.price)}</td>
+            <td class="center num-tabular" style="font-weight:700;">${formatNumber((Number(item.qty) || 0) * (Number(item.price) || 0))}</td>
+          </tr>
+        `).join('');
+
+        return `
+          <div class="print-doc print-${sizeMode}">
+            <div class="print-header">
+              <div class="print-brand">
+                <div class="print-logo">${getLogoHtml()}</div>
+                <div>
+                  <div class="print-shop-name">کافی‌نت جوان</div>
+                  <div class="print-shop-info">فاکتور رسمی فروش خدمات و محصولات</div>
+                  ${(shopPhone || shopAddr) ? `<div class="print-shop-info num-tabular">${[shopAddr, shopPhone].filter(Boolean).join(' | ')}</div>` : ''}
+                </div>
+              </div>
+              <div class="print-meta">
+                <div>شماره فاکتور: <strong class="num-tabular">#${escapeHtml(inv.invoiceNumber || '—')}</strong></div>
+                <div>تاریخ صدور: <strong class="num-tabular">${escapeHtml(inv.date || getTodayJalali())}</strong></div>
+                <div>وضعیت پرداخت: <strong>${escapeHtml(inv.paymentStatus || 'پرداخت شده')}</strong></div>
+              </div>
+            </div>
+
+            <div class="print-customer-bar">
+              <div><strong>نام مشتری:</strong> ${escapeHtml(inv.customerName || 'مشتری حضوری')}</div>
+              ${inv.customerPhone ? `<div class="num-tabular"><strong>شماره تماس:</strong> ${escapeHtml(inv.customerPhone)}</div>` : ''}
+            </div>
+
+            <table class="print-table">
+              <thead>
+                <tr>
+                  <th class="center" style="width:42px;">ردیف</th>
+                  <th>شرح خدمت / کالا</th>
+                  <th class="center" style="width:68px;">تعداد</th>
+                  <th class="center" style="width:120px;">قیمت واحد (تومان)</th>
+                  <th class="center" style="width:130px;">جمع کل (تومان)</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+
+            <div class="print-bottom-grid">
+              <div class="print-words-box">
+                <div><strong>مبلغ به حروف:</strong></div>
+                <div style="margin-top:4px; font-weight:700; color:#0b1f3a;">${escapeHtml(t.wordsToman)}</div>
+              </div>
+              <div class="print-totals">
+                <div class="print-total-row">
+                  <span>جمع کل اقلام:</span>
+                  <span class="num-tabular">${formatNumber(t.subtotal)} تومان</span>
+                </div>
+                ${t.discountAmount > 0 ? `
+                  <div class="print-total-row" style="color:#be123c;">
+                    <span>تخفیف:</span>
+                    <span class="num-tabular">${formatNumber(t.discountAmount)} − تومان</span>
+                  </div>
+                ` : ''}
+                <div class="print-total-row print-total-final">
+                  <span>قابل پرداخت (تومان):</span>
+                  <span class="num-tabular">${formatNumber(t.finalToman)} تومان</span>
+                </div>
+                <div class="print-total-row print-total-final" style="background:#ffffff; font-size:0.84rem;">
+                  <span>معادل به ریال:</span>
+                  <span class="num-tabular">${formatNumber(t.finalRial)} ریال</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="print-signatures">
+              <div>مهر و امضای فروشنده (کافی‌نت جوان)</div>
+              <div>امضای مشتری</div>
+            </div>
+
+            <div class="print-footer-note">${footerNote}</div>
+          </div>
+        `;
+      }
+
+      function executePrint(inv) {
+        if (!inv.items || inv.items.length === 0) {
+          showToast('فاکتور خالی است! ابتدا از بخش «خدمات» اقلام را اضافه کنید.', 'error');
+          return;
+        }
+        const sizeMode = document.getElementById('print-size-select').value;
+        const pageStyleEl = document.getElementById('dynamic-print-page-style');
+
+        if (sizeMode === '80mm') {
+          pageStyleEl.textContent = '@page { size: 80mm auto; margin: 3mm; }';
+        } else if (sizeMode === 'a5') {
+          pageStyleEl.textContent = '@page { size: A5 portrait; margin: 8mm; }';
+        } else {
+          pageStyleEl.textContent = '@page { size: A4 portrait; margin: 12mm; }';
+        }
+
+        document.getElementById('print-area').innerHTML = buildPrintHtml(inv, sizeMode);
+        window.print();
+      }
+
+      /* -----------------------------------------------------------------------
+         ۱۱. پشتیبان‌گیری JSON و خروجی اکسل CSV فارسی با UTF-8 BOM
+         ----------------------------------------------------------------------- */
+      function exportJsonBackup() {
+        try {
+          const payload = {
+            app: 'JavanCafeNetAccounting',
+            version: 3,
+            exportedAt: new Date().toISOString(),
+            data: {
+              services: state.services,
+              invoices: state.invoices,
+              nextInvoiceNumber: state.nextInvoiceNumber,
+              debts: state.debts,
+              customLogo: state.customLogo,
+              settings: state.settings
+            }
+          };
+          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `javan-cafenet-backup-${getTodayJalali().replace(/\//g, '-')}.json`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          showToast('فایل پشتیبان JSON با موفقیت دانلود شد.', 'success');
+        } catch (err) {
+          showToast('خطا در ایجاد فایل پشتیبان.', 'error');
+        }
+      }
+
+      function importJsonBackup(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const parsed = JSON.parse(e.target.result);
+            const d = parsed.data || parsed;
+            if (!Array.isArray(d.services) || !Array.isArray(d.invoices)) {
+              showToast('ساختار فایل پشتیبان نامعتبر است.', 'error');
+              return;
+            }
+            openConfirm(
+              'بازیابی فایل پشتیبان',
+              `اطلاعات فعلی با ${d.services.length} خدمت، ${d.invoices.length} فاکتور${Array.isArray(d.debts) ? ' و ' + d.debts.length + ' نسیه' : ''} جایگزین شود؟`,
+              () => {
+                state.services = d.services;
+                state.invoices = d.invoices.map(normalizeInvoice).filter(Boolean);
+                if (d.nextInvoiceNumber && !isNaN(Number(d.nextInvoiceNumber))) {
+                  state.nextInvoiceNumber = Number(d.nextInvoiceNumber);
+                }
+                if (Array.isArray(d.debts)) { state.debts = d.debts.filter(x => x && x.id); saveDebts(); }
+                if (d.settings) state.settings = { ...DEFAULT_SETTINGS, ...d.settings };
+                saveServices();
+                saveInvoices();
+                saveSettings();
+                saveLogo(d.customLogo || null);
+                resetInvoice(false);
+                closeModal('settings-modal');
+                showToast('اطلاعات با موفقیت بازیابی شد.', 'success');
+              },
+              'بازیابی اطلاعات'
+            );
+          } catch (err) {
+            showToast('فایل انتخاب‌شده JSON معتبر نیست.', 'error');
+          }
+        };
+        reader.readAsText(file);
+      }
+
+      function exportCsvExcel() {
+        if (state.invoices.length === 0) {
+          showToast('هیچ فاکتوری در تاریخچه برای خروجی اکسل وجود ندارد.', 'error');
+          return;
+        }
+        const csvCell = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+        const headers = ['شماره فاکتور', 'تاریخ شمسی', 'نام مشتری', 'شماره تماس', 'وضعیت پرداخت', 'تعداد اقلام', 'جمع کل (تومان)', 'تخفیف (تومان)', 'قابل پرداخت (تومان)', 'قابل پرداخت (ریال)'];
+        const lines = [headers.map(csvCell).join(',')];
+
+        state.invoices.forEach(inv => {
+          lines.push([
+            inv.invoiceNumber,
+            inv.date,
+            inv.customerName || 'مشتری حضوری',
+            inv.customerPhone || '',
+            inv.paymentStatus || 'پرداخت شده',
+            inv.items ? inv.items.length : 0,
+            inv.subtotal || 0,
+            inv.discountAmount || 0,
+            inv.finalToman || 0,
+            inv.finalRial || 0
+          ].map(csvCell).join(','));
+        });
+
+        // UTF-8 BOM برای نمایش بی‌نقص حروف فارسی در اکسل
+        const bom = '\uFEFF';
+        const blob = new Blob([bom + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `javan-cafenet-invoices-${getTodayJalali().replace(/\//g, '-')}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showToast('فایل اکسل (CSV فارسی) دانلود شد.', 'success');
+      }
+
+      /* -----------------------------------------------------------------------
+         ۱۲. اتصال رویدادها (Event Delegation برای حداکثر سرعت)
+         ----------------------------------------------------------------------- */
+      function bindEvents() {
+        // باز کردن مودال خدمات از هر دکمه با کلاس open-services-trigger
+        document.addEventListener('click', (e) => {
+          if (e.target.closest('.open-services-trigger')) {
+            openServicesModal('list');
+            return;
+          }
+          const closeBtn = e.target.closest('[data-close-modal]');
+          if (closeBtn) {
+            closeModal(closeBtn.dataset.closeModal);
+          }
+        });
+
+        // بستن مودال‌ها با کلیک روی پس‌زمینه تیره
+        ['services-modal', 'history-modal', 'debts-modal', 'settings-modal', 'confirm-modal'].forEach(id => {
+          document.getElementById(id).addEventListener('click', (e) => {
+            if (e.target.id === id) {
+              if (id === 'confirm-modal') closeConfirm();
+              else closeModal(id);
+            }
+          });
+        });
+
+        // میانبرهای صفحه‌کلید (F2 و Escape)
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'F2') {
+            e.preventDefault();
+            openServicesModal('list');
+          } else if (e.key === 'Escape') {
+            closeConfirm();
+            closeModal('services-modal');
+            closeModal('history-modal');
+            closeModal('debts-modal');
+            closeModal('settings-modal');
+          }
+        });
+
+        // تغییر تم شب/روز
+        document.getElementById('btn-toggle-theme').addEventListener('click', () => {
+          applyTheme(state.theme === 'dark' ? 'light' : 'dark');
+        });
+
+        // آپلود لوگو (از هدر و از مودال تنظیمات)
+        const logoInput = document.getElementById('logo-file-input');
+        document.getElementById('logo-upload-trigger').addEventListener('click', () => logoInput.click());
+        document.getElementById('btn-settings-upload-logo').addEventListener('click', () => logoInput.click());
+        logoInput.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          if (!file.type.startsWith('image/')) {
+            showToast('فایل انتخابی باید تصویر باشد.', 'error');
+            return;
+          }
+          if (file.size > 1.5 * 1024 * 1024) {
+            showToast('حجم لوگو باید کمتر از ۱.۵ مگابایت باشد.', 'error');
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            saveLogo(ev.target.result);
+            showToast('لوگوی اختصاصی ذخیره شد.', 'success');
+          };
+          reader.readAsDataURL(file);
+          logoInput.value = '';
+        });
+
+        document.getElementById('btn-settings-reset-logo').addEventListener('click', () => {
+          saveLogo(null);
+          showToast('لوگوی پیش‌فرض بازیابی شد.', 'info');
+        });
+
+        // افزودن آیتم آزاد سریع به جدول فاکتور
+        document.getElementById('btn-add-custom-item').addEventListener('click', () => {
+          state.invoice.items.push({
+            serviceId: null,
+            name: 'خدمت آزاد',
+            price: 0,
+            qty: 1
+          });
+          renderInvoiceTable();
+          const lastInput = document.querySelector('#invoice-tbody tr:last-child .inline-text-input');
+          if (lastInput) { lastInput.focus(); lastInput.select(); }
+        });
+
+        // ورودی‌های مشخصات فاکتور
+        document.getElementById('inv-customer').addEventListener('input', (e) => state.invoice.customerName = e.target.value);
+        document.getElementById('inv-phone').addEventListener('input', (e) => {
+          const v = toEnDigits(e.target.value);
+          if (v !== e.target.value) e.target.value = v;
+          state.invoice.customerPhone = v;
+        });
+        document.getElementById('inv-number').addEventListener('input', (e) => {
+          const v = toEnDigits(e.target.value);
+          if (v !== e.target.value) e.target.value = v;
+          state.invoice.invoiceNumber = v;
+        });
+        document.getElementById('inv-date').addEventListener('input', (e) => {
+          const v = toEnDigits(e.target.value);
+          if (v !== e.target.value) e.target.value = v;
+          state.invoice.date = v;
+        });
+        document.getElementById('inv-date').addEventListener('change', (e) => {
+          const v = normalizeJalaliDate(e.target.value);
+          e.target.value = v;
+          state.invoice.date = v;
+          if (v && !isValidJalaliDate(v)) showToast('قالب تاریخ باید مثل 1405/09/06 باشد.', 'error');
+        });
+        document.getElementById('inv-payment-status').addEventListener('change', (e) => state.invoice.paymentStatus = e.target.value);
+
+        // ویرایش مستقیم اقلام فاکتور (تعداد، قیمت، شرح، حذف)
+        const invTbody = document.getElementById('invoice-tbody');
+        invTbody.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-qty-act]');
+          if (!btn) return;
+          const idx = Number(btn.dataset.idx);
+          const act = btn.dataset.qtyAct;
+          const item = state.invoice.items[idx];
+          if (!item) return;
+
+          if (act === 'inc') {
+            item.qty = (Number(item.qty) || 1) + 1;
+            updateRowDOM(idx);
+          } else if (act === 'dec') {
+            if (item.qty > 1) { item.qty -= 1; updateRowDOM(idx); }
+          } else if (act === 'remove') {
+            state.invoice.items.splice(idx, 1);
+            renderInvoiceTable();
+          }
+        });
+
+        invTbody.addEventListener('input', (e) => {
+          const field = e.target.dataset.invEdit;
+          if (!field) return;
+          const idx = Number(e.target.dataset.idx);
+          const item = state.invoice.items[idx];
+          if (!item) return;
+
+          if (field === 'name') {
+            item.name = e.target.value;
+            return;
+          }
+          if (field === 'price') item.price = Math.max(0, Number(e.target.value) || 0);
+          if (field === 'qty') item.qty = Math.max(1, parseInt(e.target.value, 10) || 1);
+
+          const row = e.target.closest('tr');
+          if (row) {
+            const cell = row.querySelector('.row-total-cell');
+            if (cell) cell.textContent = formatNumber(item.qty * item.price);
+          }
+          updateSummaryDOM();
+        });
+
+        // تخفیف
+        const discValEl = document.getElementById('inv-discount-value');
+        const clampDiscount = () => {
+          let v = Math.max(0, Number(discValEl.value) || 0);
+          if (state.invoice.discountType === 'percent' && v > 100) {
+            v = 100;
+            discValEl.value = '100';
+          }
+          state.invoice.discountValue = v;
+          updateSummaryDOM();
+        };
+        document.getElementById('inv-discount-type').addEventListener('change', (e) => {
+          state.invoice.discountType = e.target.value;
+          clampDiscount();
+        });
+        discValEl.addEventListener('input', clampDiscount);
+
+        // دکمه‌های عملیات پایین فاکتور
+        document.getElementById('btn-new-invoice').addEventListener('click', () => {
+          if (state.invoice.items.length > 0) {
+            openConfirm('فاکتور جدید', 'اقلام فاکتور فعلی پاک می‌شوند. ادامه می‌دهید؟', () => resetInvoice(true), 'بله، فاکتور جدید');
+          } else {
+            resetInvoice(true);
+          }
+        });
+
+        document.getElementById('btn-print-invoice').addEventListener('click', () => executePrint(state.invoice));
+
+        document.getElementById('btn-save-invoice').addEventListener('click', () => {
+          if (state.invoice.items.length === 0) {
+            showToast('فاکتور خالی است! ابتدا خدمتی اضافه کنید.', 'error');
+            return;
+          }
+
+          const invNumber = toEnDigits(state.invoice.invoiceNumber).trim() || String(state.nextInvoiceNumber);
+          const editingId = state.invoice.editingId;
+
+          // جلوگیری از شماره فاکتور تکراری
+          const dup = state.invoices.find(i => String(i.invoiceNumber) === invNumber && i.id !== editingId);
+          if (dup) {
+            showToast(`شماره فاکتور #${invNumber} قبلاً ثبت شده است. شماره دیگری وارد کنید.`, 'error');
+            document.getElementById('inv-number').focus();
+            return;
+          }
+
+          const dateNorm = normalizeJalaliDate(state.invoice.date) || getTodayJalali();
+          if (!isValidJalaliDate(dateNorm)) {
+            showToast('قالب تاریخ باید مثل 1405/09/06 باشد.', 'error');
+            document.getElementById('inv-date').focus();
+            return;
+          }
+
+          const t = computeTotals(state.invoice.items, state.invoice.discountType, state.invoice.discountValue);
+          const existingIdx = editingId ? state.invoices.findIndex(i => i.id === editingId) : -1;
+          const prev = existingIdx !== -1 ? state.invoices[existingIdx] : null;
+
+          const record = {
+            id: prev ? prev.id : generateId('inv'),
+            invoiceNumber: invNumber,
+            customerName: state.invoice.customerName.trim(),
+            customerPhone: toEnDigits(state.invoice.customerPhone).trim(),
+            date: dateNorm,
+            paymentStatus: state.invoice.paymentStatus || 'پرداخت شده',
+            items: state.invoice.items.map(i => ({ ...i })),
+            discountType: state.invoice.discountType,
+            discountValue: state.invoice.discountValue,
+            subtotal: t.subtotal,
+            discountAmount: t.discountAmount,
+            finalToman: t.finalToman,
+            finalRial: t.finalRial,
+            createdAt: prev ? prev.createdAt : Date.now(),
+            updatedAt: Date.now()
+          };
+
+          if (prev) {
+            // ویرایش فاکتور قبلی: جایگزینی در همان جایگاه، بدون تغییر شمارنده
+            state.invoices[existingIdx] = record;
+          } else {
+            state.invoices.unshift(record);
+            const numVal = parseInt(record.invoiceNumber, 10);
+            if (!isNaN(numVal) && numVal >= state.nextInvoiceNumber) state.nextInvoiceNumber = numVal + 1;
+            else state.nextInvoiceNumber += 1;
+          }
+
+          saveInvoices();
+          resetInvoice(false);
+          showToast(prev
+            ? `فاکتور شماره #${record.invoiceNumber} ویرایش شد.`
+            : `فاکتور شماره #${record.invoiceNumber} در تاریخچه ثبت شد.`, 'success');
+        });
+
+        // رویدادهای مودال خدمات (تب‌ها، دسته‌بندی، جستجو، انتخاب و تایید)
+        document.querySelectorAll('#services-modal .modal-tab-btn').forEach(btn => {
+          btn.addEventListener('click', () => switchServicesTab(btn.dataset.srvTab));
+        });
+
+        document.getElementById('srv-category-pills').addEventListener('click', (e) => {
+          const pill = e.target.closest('.cat-pill');
+          if (!pill) return;
+          state.activeCategory = pill.dataset.cat;
+          renderCategoryPills();
+          renderServicesPickGrid();
+        });
+
+        document.getElementById('srv-list-search').addEventListener('input', debounce(renderServicesPickGrid));
+
+        document.getElementById('srv-pick-grid').addEventListener('change', (e) => {
+          const cb = e.target.closest('.service-cb');
+          if (!cb) return;
+          const id = cb.dataset.srvId;
+          if (cb.checked) state.modalSelectedIds.add(id);
+          else state.modalSelectedIds.delete(id);
+          renderServicesPickGrid();
+        });
+
+        document.getElementById('btn-clear-srv-picks').addEventListener('click', () => {
+          state.modalSelectedIds.clear();
+          renderServicesPickGrid();
+        });
+
+        document.getElementById('btn-confirm-services').addEventListener('click', addSelectedServicesToInvoice);
+
+        // رویدادهای تب انبار داخل مودال خدمات
+        document.getElementById('inventory-form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          const editId = document.getElementById('inv-edit-id').value;
+          const name = document.getElementById('inv-name').value.trim();
+          const price = Math.max(0, Number(document.getElementById('inv-price').value) || 0);
+          const category = document.getElementById('inv-category').value;
+          const desc = document.getElementById('inv-desc').value.trim();
+
+          if (!name) return;
+
+          if (editId) {
+            const idx = state.services.findIndex(s => s.id === editId);
+            if (idx !== -1) {
+              state.services[idx] = { ...state.services[idx], name, price, category, desc };
+              showToast('خدمت با موفقیت ویرایش شد.', 'success');
+            }
+          } else {
+            state.services.unshift({ id: generateId('srv'), name, price, category, desc });
+            showToast('خدمت جدید در انبار ثبت شد.', 'success');
+          }
+
+          saveServices();
+          resetInventoryForm();
+          renderInventoryTable();
+          renderServicesPickGrid();
+        });
+
+        document.getElementById('btn-inv-cancel-edit').addEventListener('click', resetInventoryForm);
+        document.getElementById('inv-table-search').addEventListener('input', debounce(renderInventoryTable));
+
+        document.getElementById('inv-table-tbody').addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-inv-act]');
+          if (!btn) return;
+          const id = btn.dataset.id;
+          const act = btn.dataset.invAct;
+          const srv = state.services.find(s => s.id === id);
+          if (!srv) return;
+
+          if (act === 'edit') {
+            document.getElementById('inv-edit-id').value = srv.id;
+            document.getElementById('inv-name').value = srv.name;
+            document.getElementById('inv-price').value = srv.price;
+            document.getElementById('inv-category').value = srv.category || 'سایر';
+            document.getElementById('inv-desc').value = srv.desc || '';
+            document.getElementById('inv-form-title').textContent = 'ویرایش خدمت در انبار';
+            document.getElementById('btn-inv-submit').textContent = 'ثبت تغییرات';
+            document.getElementById('btn-inv-cancel-edit').style.display = 'inline-flex';
+            document.getElementById('inv-name').focus();
+          } else if (act === 'delete') {
+            openConfirm('حذف خدمت', `آیا از حذف «${srv.name}» از انبار مطمئن هستید؟`, () => {
+              state.services = state.services.filter(s => s.id !== id);
+              state.modalSelectedIds.delete(id);
+              saveServices();
+              renderInventoryTable();
+              renderServicesPickGrid();
+              showToast('خدمت از انبار حذف شد.', 'info');
+            }, 'حذف');
+          }
+        });
+
+        // رویدادهای مودال تاریخچه و آمار
+        document.getElementById('btn-open-history').addEventListener('click', () => {
+          document.getElementById('history-search').value = '';
+          renderHistoryModal();
+          document.getElementById('history-modal').classList.add('open');
+        });
+        document.getElementById('history-search').addEventListener('input', debounce(renderHistoryModal));
+        document.getElementById('btn-export-csv-quick').addEventListener('click', exportCsvExcel);
+
+        document.getElementById('history-tbody').addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-hist-act]');
+          if (!btn) return;
+          const id = btn.dataset.id;
+          const act = btn.dataset.histAct;
+          const inv = state.invoices.find(i => i.id === id);
+          if (!inv) return;
+
+          if (act === 'print') {
+            executePrint(inv);
+          } else if (act === 'load') {
+            state.invoice = {
+              items: (inv.items || []).map(i => ({ ...i })),
+              customerName: inv.customerName || '',
+              customerPhone: inv.customerPhone || '',
+              invoiceNumber: inv.invoiceNumber || String(state.nextInvoiceNumber),
+              editingId: inv.id,
+              date: inv.date || getTodayJalali(),
+              paymentStatus: inv.paymentStatus || 'پرداخت شده',
+              discountType: inv.discountType || 'amount',
+              discountValue: inv.discountValue || 0
+            };
+            document.getElementById('inv-customer').value = state.invoice.customerName;
+            document.getElementById('inv-phone').value = state.invoice.customerPhone;
+            document.getElementById('inv-number').value = state.invoice.invoiceNumber;
+            document.getElementById('inv-date').value = state.invoice.date;
+            document.getElementById('inv-payment-status').value = state.invoice.paymentStatus;
+            document.getElementById('inv-discount-type').value = state.invoice.discountType;
+            document.getElementById('inv-discount-value').value = state.invoice.discountValue;
+
+            renderInvoiceTable();
+            closeModal('history-modal');
+            showToast(`فاکتور شماره #${inv.invoiceNumber} بارگذاری شد؛ با «ثبت» همین فاکتور ویرایش می‌شود (فاکتور جدید نمی‌سازد).`, 'info');
+          } else if (act === 'delete') {
+            openConfirm('حذف فاکتور', `آیا از حذف فاکتور شماره #${inv.invoiceNumber} مطمئن هستید؟`, () => {
+              state.invoices = state.invoices.filter(i => i.id !== id);
+              if (state.invoice.editingId === id) state.invoice.editingId = null;
+              saveInvoices();
+              renderHistoryModal();
+              showToast('فاکتور حذف شد.', 'info');
+            }, 'حذف فاکتور');
+          }
+        });
+
+        // رویدادهای مودال تنظیمات و پشتیبان
+        document.getElementById('btn-open-settings').addEventListener('click', () => {
+          document.getElementById('set-phone').value = state.settings.phone || '';
+          document.getElementById('set-address').value = state.settings.address || '';
+          document.getElementById('set-footer-note').value = state.settings.footerNote || '';
+          document.getElementById('settings-modal').classList.add('open');
+        });
+
+        document.getElementById('btn-save-settings').addEventListener('click', () => {
+          state.settings.phone = document.getElementById('set-phone').value.trim();
+          state.settings.address = document.getElementById('set-address').value.trim();
+          state.settings.footerNote = document.getElementById('set-footer-note').value.trim() || DEFAULT_SETTINGS.footerNote;
+          saveSettings();
+          showToast('تنظیمات کافی‌نت ذخیره شد.', 'success');
+        });
+
+        document.getElementById('btn-export-json').addEventListener('click', exportJsonBackup);
+        document.getElementById('btn-export-csv').addEventListener('click', exportCsvExcel);
+        const importInput = document.getElementById('import-json-input');
+        document.getElementById('btn-import-json').addEventListener('click', () => importInput.click());
+        importInput.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (file) importJsonBackup(file);
+          importInput.value = '';
+        });
+
+        // رویدادهای مودال تاییدیه
+        document.getElementById('confirm-cancel').addEventListener('click', closeConfirm);
+        document.getElementById('confirm-ok').addEventListener('click', () => {
+          if (typeof pendingConfirmAction === 'function') pendingConfirmAction();
+          closeConfirm();
+        });
+      }
+
+      /* -----------------------------------------------------------------------
+         ۱۳. راه‌اندازی اولیه
+         ----------------------------------------------------------------------- */
+      function init() {
+        loadStorage();
+        applyTheme(state.theme);
+        renderLogos();
+        document.getElementById('header-jalali-date').textContent = getFullJalaliHeaderLabel();
+        document.getElementById('header-history-count').textContent = state.invoices.length;
+        updateIranClock();
+        let clockTimer = null;
+        function syncClockVisibility() {
+          if (clockTimer !== null) clearInterval(clockTimer);
+          clockTimer = null;
+          if (!document.hidden) {
+            updateIranClock();
+            clockTimer = setInterval(updateIranClock, 1000);
+          }
+        }
+        document.addEventListener('visibilitychange', syncClockVisibility);
+        syncClockVisibility();
+        bindEvents();
+        bindDebtEvents();
+        updateDebtBadge();
+        resetInvoice(false);
+      }
+
+      document.addEventListener('DOMContentLoaded', init);
+    })();
+  </script>
+</body>
+</html>
+
+========================================================================================
+FILE: assets/fonts/README.txt
+GIT BLOB: 8c9f54315f625cf23ef43f6158eb65d56d7aa312
+UTF-8 BYTES: 227
+========================================================================================
+Optional: install Vazirmatn in Windows or place the official static .ttf files here.
+Official upstream: https://github.com/rastikerdar/vazirmatn
+No font files are included. The application falls back to installed system fonts.
+
+
+========================================================================================
+FILE: assets/javan.svg
+GIT BLOB: a0c868761c657e74bec331314259371ead17490a
+UTF-8 BYTES: 868
+========================================================================================
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect x="7" y="7" width="242" height="242" rx="55" fill="#14263c"/><rect x="20" y="20" width="216" height="216" rx="43" fill="#203b52"/><rect x="42" y="54" width="172" height="138" rx="22" fill="#f4fafb"/><rect x="42" y="54" width="172" height="36" rx="15" fill="#a5dad4"/><g fill="#176c70"><circle cx="64.5" cy="70.5" r="3.5"/><circle cx="79.5" cy="70.5" r="3.5"/><circle cx="94.5" cy="70.5" r="3.5"/></g><g fill="none" stroke="#176c70" stroke-width="10"><rect x="64" y="108" width="69" height="37" rx="18"/><rect x="123" y="135" width="69" height="37" rx="18"/><path d="M104 136l48 10" stroke-linecap="round"/></g><circle cx="195" cy="196" r="22" fill="#e8b750" stroke="#14263c" stroke-width="5"/><path d="m184 196 8 8 15-16" fill="none" stroke="#14263c" stroke-width="5" stroke-linejoin="round"/></svg>
+
+
+========================================================================================
+FILE: build_windows.ps1
+GIT BLOB: e9c7f9765da852e82c2ad2291ad5c4041ebc07ac
+UTF-8 BYTES: 2447
+========================================================================================
+param([string]$Python = "", [switch]$SkipInstall)
+$ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
+function Run-Python {
+    & $script:Python @args
+    if ($LASTEXITCODE -ne 0) { throw "Python command failed: $args (exit $LASTEXITCODE)" }
+}
+if (-not $Python) {
+    if (-not (Test-Path ".venv\Scripts\python.exe")) {
+        & py -3.12 -m venv .venv
+        if ($LASTEXITCODE -ne 0) { throw "Python 3.12 x64 is required to build locally." }
+    }
+    $Python = (Resolve-Path ".venv\Scripts\python.exe").Path
+}
+if (-not $SkipInstall) {
+    Run-Python -m pip install --upgrade pip
+    Run-Python -m pip install -r requirements-build.txt
+}
+Run-Python -c "import struct; assert struct.calcsize('P') == 8, '64-bit Python required'"
+Run-Python scripts/prepare_assets.py
+Run-Python -m compileall -q main.py javan tests scripts
+Run-Python -m unittest discover -s tests -v
+Run-Python -m PyInstaller --noconfirm --clean --onefile --windowed --noupx --name JavanLinks --icon assets/javan.ico --version-file scripts/version_info.txt --add-data "assets;assets" main.py
+$exe = (Resolve-Path "dist\JavanLinks.exe").Path
+$process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru
+if (-not $process.WaitForExit(180000)) {
+    & taskkill /PID $process.Id /T /F
+    throw "Frozen WebEngine startup test timed out."
+}
+if ($process.ExitCode -ne 0) { throw "Frozen WebEngine startup test failed: $($process.ExitCode)" }
+# Verify actual accounting storage survives two independent frozen processes.
+$probe = Join-Path ([System.IO.Path]::GetTempPath()) ("JavanLinks-probe-" + [guid]::NewGuid().ToString("N"))
+try {
+    foreach ($mode in @("write", "read")) {
+        $probeProcess = Start-Process -FilePath $exe -ArgumentList @("--accounting-probe-$mode", ('"' + $probe + '"')) -PassThru
+        if (-not $probeProcess.WaitForExit(180000)) {
+            & taskkill /PID $probeProcess.Id /T /F
+            throw "Accounting persistence probe $mode timed out."
+        }
+        if ($probeProcess.ExitCode -ne 0) { throw "Accounting persistence probe $mode failed: $($probeProcess.ExitCode)" }
+    }
+} finally {
+    if (Test-Path $probe) { Remove-Item -Path $probe -Recurse -Force -ErrorAction SilentlyContinue }
+}
+$hash = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -Path "dist\JavanLinks.exe.sha256" -Value "$hash  JavanLinks.exe" -Encoding ascii
+Write-Host "Build and frozen startup test succeeded: $exe"
+
+
+========================================================================================
+FILE: javan/__init__.py
+GIT BLOB: 3c9da71bfe6f35413066c0c5e8f3b9de83d48222
+UTF-8 BYTES: 68
+========================================================================================
+"""Javan Internet Cafe desktop workspace."""
+
+__version__ = '0.5.0'
+
+
+========================================================================================
+FILE: javan/accounting.py
+GIT BLOB: f614c67c531078b148194a6519ac1adec84a12a7
+UTF-8 BYTES: 4808
+========================================================================================
+"""Stable offline accounting content and optional local typefaces.
+
+Financial data lives in the dedicated persistent WebEngine profile, not
+the EXE or the installed HTML. Never replace that profile on update.
+"""
+from pathlib import Path
+from zipfile import ZipFile, BadZipFile
+from .storage import atomic_write
+
+ASSETS = Path(__file__).resolve().parent.parent / 'assets'
+FONT_NAMES = {
+    'a rooznameh.ttf': 'Rooznameh.ttf',
+    'far_nazanin.ttf': 'Nazanin.ttf',
+    'vazirmatn_regular.ttf': 'Vazirmatn-Regular.ttf',
+    'vazirmatn_medium.ttf': 'Vazirmatn-Medium.ttf',
+    'vazirmatn_semibold.ttf': 'Vazirmatn-SemiBold.ttf',
+    'vazirmatn_bold.ttf': 'Vazirmatn-Bold.ttf',
+}
+MAX_FONT_BYTES = 2 * 1024 * 1024
+
+
+def write_if_changed(path, data):
+    if not path.is_file() or path.read_bytes() != data:
+        atomic_write(path, data)
+
+
+def make_font_css(folder):
+    rules = []
+    def face(filename, family, weight):
+        if (folder / filename).is_file():
+            rules.append(f"@font-face {{ font-family: '{family}'; src: url('{filename}') format('truetype'); font-weight: {weight}; font-display: swap; }}")
+            return True
+        return False
+    face('Vazirmatn.ttf', 'JavanVazir', '100 900')
+    for name, weight in [('Regular', 400), ('Medium', 500), ('SemiBold', 600), ('Bold', 700)]:
+        face(f'Vazirmatn-{name}.ttf', 'JavanVazirLocal', weight)
+    face('Rooznameh.ttf', 'JavanHeadline', '400')
+    face('Nazanin.ttf', 'JavanNazanin', '400')
+    rules.append("""
+html:root { --font-main: 'JavanVazirLocal', 'JavanVazir', 'Vazirmatn', Tahoma, sans-serif; }
+.app-shell .brand-text h1, .print-doc .print-shop-name { font-family: 'JavanHeadline', var(--font-main); font-weight: 700; }
+@media print {
+  .print-doc:not(.print-80mm) .print-shop-info,
+  .print-doc:not(.print-80mm) .print-words-box,
+  .print-doc:not(.print-80mm) .print-signatures,
+  .print-doc:not(.print-80mm) .print-footer-note {
+    font-family: 'JavanNazanin', var(--font-main);
+    font-size: 11pt;
+  }
+}
+""")
+    return '\n'.join(rules).encode('utf-8')
+
+
+def prepare_accounting(data_folder, assets=ASSETS):
+    # This file URL and directory name MUST remain constant across releases.
+    root = Path(data_folder).resolve() / 'accounting'
+    font_dir = root / 'fonts'
+    font_dir.mkdir(parents=True, exist_ok=True)
+    source = Path(assets) / 'accounting' / 'index.html'
+    if not source.is_file():
+        raise FileNotFoundError('فایل داخلی حسابداری در بسته برنامه یافت نشد.')
+    write_if_changed(root / 'index.html', source.read_bytes())
+    default_font = Path(assets) / 'fonts' / 'Vazirmatn.ttf'
+    if default_font.is_file():
+        write_if_changed(font_dir / 'Vazirmatn.ttf', default_font.read_bytes())
+    license_file = Path(assets) / 'fonts' / 'OFL.txt'
+    if license_file.is_file():
+        write_if_changed(font_dir / 'OFL.txt', license_file.read_bytes())
+    write_if_changed(font_dir / 'accounting.css', make_font_css(font_dir))
+    return root / 'index.html'
+
+
+def validate_font(data):
+    if not 12 <= len(data) <= MAX_FONT_BYTES or data[:4] not in (b'\x00\x01\x00\x00', b'OTTO', b'true'):
+        raise ValueError('فایل فونت معتبر نیست.')
+    return data
+
+
+def collect_fonts(paths):
+    """Read only explicitly supported font basenames, not other ZIP contents."""
+    result = {}
+    for name in paths:
+        path = Path(name)
+        if path.suffix.lower() == '.zip':
+            with ZipFile(path) as archive:
+                for info in archive.infolist():
+                    target = FONT_NAMES.get(info.filename.replace('\\', '/').rsplit('/', 1)[-1].casefold())
+                    if not target or info.is_dir():
+                        continue
+                    if info.file_size > MAX_FONT_BYTES:
+                        raise ValueError('حجم فونت بیش از حد مجاز است.')
+                    with archive.open(info) as stream:
+                        result[target] = validate_font(stream.read(MAX_FONT_BYTES + 1))
+        else:
+            target = FONT_NAMES.get(path.name.casefold())
+            if target:
+                with path.open('rb') as stream:
+                    result[target] = validate_font(stream.read(MAX_FONT_BYTES + 1))
+    return result
+
+
+def import_fonts(data_folder, paths, assets=ASSETS):
+    selected = collect_fonts(paths)
+    if not selected:
+        raise ValueError('هیچ‌یک از فونت‌های روزنامه، نازنین یا وزیرمتن مورد انتظار یافت نشد.')
+    root = prepare_accounting(data_folder, assets).parent
+    folder = root / 'fonts'
+    for name, data in selected.items():
+        write_if_changed(folder / name, data)
+    write_if_changed(folder / 'accounting.css', make_font_css(folder))
+    return tuple(sorted(selected))
+
+
+========================================================================================
+FILE: javan/app.py
+GIT BLOB: 0652c30c59f49092655076e00c72b89038952bf0
+UTF-8 BYTES: 1820
+========================================================================================
+import sys
+from pathlib import Path
+from PySide6.QtCore import Qt, QStandardPaths, QLockFile
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
+from .theme import STYLE, configure_font
+from .window import MainWindow
+from .manager import warn
+from .storage import CatalogStore
+from . import __version__
+
+
+def run() -> int:
+    app = QApplication(sys.argv)
+    app.setApplicationName('Javan Links')
+    app.setApplicationDisplayName('لینک‌های کاربردی کافینت جوان')
+    app.setApplicationVersion(__version__)
+    app.setOrganizationName('Javan')
+    app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    icon = Path(__file__).resolve().parent.parent / 'assets' / 'javan.ico'
+    if icon.is_file():
+        app.setWindowIcon(QIcon(str(icon)))
+    configure_font(app)
+    app.setStyle('Fusion')
+    app.setStyleSheet(STYLE)
+    folder = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        warn(None, 'خطا در ایجاد پوشه داده‌ها: ' + str(exc))
+        return 1
+    lock = QLockFile(str(folder / 'catalog.lock'))
+    if not lock.tryLock(0):
+        warn(None, 'برنامه در حال اجراست یا پوشه داده‌ها قابل نوشتن نیست.')
+        return 1
+    try:
+        store = CatalogStore(folder / 'catalog.json')
+    except (OSError, ValueError, RecursionError) as exc:
+        warn(None, 'فایل داده باز نشد و بازنویسی نشده است. فایل catalog.json را بررسی یا از نسخه پشتیبان بازیابی کنید.\n' + str(folder) + '\n' + str(exc))
+        return 1
+    window = MainWindow(store)
+    window.showMaximized()
+    return app.exec()
+
+
+========================================================================================
+FILE: javan/browser.py
+GIT BLOB: 259a729f3d6257fa82d94cd2ddd33ffb3367246a
+UTF-8 BYTES: 7797
+========================================================================================
+"""Shared web session and isolated local profiles for tabbed browsing."""
+from pathlib import Path
+from hashlib import sha256
+from PySide6.QtCore import QObject
+from PySide6.QtCore import QUrl, Signal
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineUrlRequestInterceptor
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import QApplication
+
+HOME_HTML = '''<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box} body{margin:0;background:#f8fafc;color:#18283b;font-family:Vazirmatn,Vazir,Tahoma,'Segoe UI',sans-serif;line-height:1.9}
+main{max-width:920px;margin:0 auto;padding:clamp(22px,5vw,62px)}
+.hero{background:linear-gradient(125deg,#14263c,#1c4556);color:#fff;border-radius:22px;padding:clamp(24px,5vw,45px);position:relative;overflow:hidden}
+.eyebrow{font-size:12px;letter-spacing:.4px;color:#a8e0d8} h1{font-size:clamp(24px,3.5vw,36px);margin:10px 0 12px} p{margin:0;color:inherit} .hero p{color:#d3e2ed;font-size:14px}
+h2{font-size:17px;margin:32px 0 14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+article{background:#fff;border:1px solid #e0e7ef;border-radius:14px;padding:18px;min-height:130px} article b{display:block;margin:8px 0 4px} article p{font-size:12px;color:#607387}
+.num{font-size:12px;background:#e3f3ef;color:#186761;border-radius:8px;padding:3px 10px;display:inline-block} .foot{font-size:12px;color:#607387;margin-top:24px}
+</style></head><body><main><div class="hero"><div class="eyebrow">میز کار دیجیتال &nbsp; / &nbsp; نسخه ۰.۵</div><h1>لینک‌های کاربردی کافینت جوان</h1><p>سامانه موردنظر خود را از منوی سمت راست انتخاب کنید تا در همین محیط باز شود.</p></div>
+<h2>دسترسی به خدمات</h2><div class="grid"><article><span class="num">۰۱</span><b>خدمات دولتی</b><p>دسترسی به درگاه‌های عمومی و مالیاتی</p></article><article><span class="num">۰۲</span><b>بانکی و چک</b><p>اطلاعات و سامانه‌های بانکی</p></article><article><span class="num">۰۳</span><b>آموزشی</b><p>آزمون‌ها و ثبت‌نام‌های آموزشی</p></article><article><span class="num">۰۴</span><b>خدمات پستی</b><p>پیگیری و خدمات مرسولات</p></article></div>
+<p class="foot">برای یافتن سریع‌تر یک سامانه، نام آن را در کادر جستجوی منو بنویسید.</p></main></body></html>'''
+
+
+class BrowserPage(QWebEnginePage):
+    navigation_blocked = Signal(str)
+
+    def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
+        if url.scheme().lower() not in ('http', 'https', 'about', 'data', 'blob'):
+            self.navigation_blocked.emit(url.scheme())
+            return False
+        return super().acceptNavigationRequest(url, navigation_type, is_main_frame)
+
+
+class LocalPolicy(QWebEngineUrlRequestInterceptor):
+    def __init__(self, root, parent=None):
+        super().__init__(parent)
+        self.root = Path(root).resolve()
+
+    def allows(self, url):
+        if url.scheme().lower() in ('data', 'blob', 'about'):
+            return True
+        if url.isLocalFile() and not url.host():
+            try:
+                return Path(url.toLocalFile()).resolve().is_relative_to(self.root)
+            except (OSError, ValueError, RuntimeError):
+                return False
+        return False
+
+    def interceptRequest(self, info):
+        if not self.allows(info.requestUrl()):
+            info.block(True)
+
+
+class LocalPage(BrowserPage):
+    def __init__(self, profile, policy, parent):
+        super().__init__(profile, parent)
+        self.policy = policy
+
+    def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
+        allowed = self.policy.allows(url)
+        if not allowed:
+            self.navigation_blocked.emit(url.scheme())
+        return allowed
+
+
+class BrowserSessions(QObject):
+    """Profiles live for the application lifetime, longer than their pages."""
+    def __init__(self, folder, download_handler):
+        super().__init__(QApplication.instance())
+        self.folder = Path(folder)
+        self.download_handler = download_handler
+        self.web = QWebEngineProfile(self)
+        self.web.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+        self.web.downloadRequested.connect(download_handler)
+        self.local_profiles = {}
+
+    def local(self, root):
+        root = Path(root).resolve()
+        if root not in self.local_profiles:
+            key = sha256(str(root).encode('utf-8')).hexdigest()[:32]
+            profile = QWebEngineProfile('JavanLocal-' + key, self)
+            profile.setPersistentStoragePath(str(self.folder / 'local-profiles' / key / 'storage'))
+            profile.setCachePath(str(self.folder / 'local-profiles' / key / 'cache'))
+            profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+            policy = LocalPolicy(root, profile)
+            profile.setUrlRequestInterceptor(policy)
+            profile.downloadRequested.connect(self.download_handler)
+            self.local_profiles[root] = (profile, policy)
+        return self.local_profiles[root]
+
+
+class BrowserView(QWebEngineView):
+    status_message = Signal(str)
+    popup_requested = Signal(object, object)
+
+    def __init__(self, sessions, root=None, parent=None):
+        super().__init__(parent)
+        self.root = Path(root).resolve() if root is not None else None
+        self.home = False
+        self.link_id = None
+        self.loading = False
+        self.progress_value = 0
+        self.last_status = 'آماده'
+        if self.root is None:
+            page = BrowserPage(sessions.web, self)
+        else:
+            profile, policy = sessions.local(self.root)
+            page = LocalPage(profile, policy, self)
+        self.setPage(page)
+        settings = page.settings()
+        A = QWebEngineSettings.WebAttribute
+        settings.setAttribute(A.LocalContentCanAccessRemoteUrls, False)
+        settings.setAttribute(A.LocalContentCanAccessFileUrls, self.root is not None)
+        settings.setAttribute(A.LocalStorageEnabled, True)
+        settings.setAttribute(A.JavascriptCanOpenWindows, self.root is None)
+        settings.setAttribute(A.PluginsEnabled, True)
+        settings.setAttribute(A.PdfViewerEnabled, True)
+        page.navigation_blocked.connect(lambda scheme: self.status_message.emit('دسترسی به این آدرس مسدود است: ' + scheme))
+        page.newWindowRequested.connect(lambda request: self.popup_requested.emit(self, request))
+
+    def navigate(self, address):
+        url = QUrl(address)
+        if self.root is not None or not url.isValid() or url.scheme().lower() not in ('http', 'https') or not url.host() or url.userInfo():
+            raise ValueError('آدرس اینترنتی معتبر نیست.')
+        self.home = False
+        self.setUrl(url)
+
+    def open_local(self, address):
+        path = Path(address).resolve()
+        if self.root is None or not path.is_relative_to(self.root) or not path.is_file() or path.suffix.lower() not in ('.html', '.htm'):
+            raise ValueError('فایل HTML معتبر یافت نشد.')
+        self.home = False
+        self.setUrl(QUrl.fromLocalFile(str(path)))
+
+    def show_home(self):
+        if self.root is not None:
+            raise ValueError('صفحه اصلی باید در زبانه وب باز شود.')
+        self.home = True
+        self.link_id = None
+        self.setHtml(HOME_HTML)
+
+
+========================================================================================
+FILE: javan/browser_utils.py
+GIT BLOB: 4ed4dad01ff7ae7bc2315a22508264e2b1fa8d39
+UTF-8 BYTES: 1750
+========================================================================================
+"""Pure browser helpers; usable without Qt."""
+from pathlib import Path
+from urllib.parse import urlsplit
+
+MIN_ZOOM, MAX_ZOOM, ZOOM_STEP = 50, 200, 10
+
+
+def next_zoom(current: int, delta: int) -> int:
+    return max(MIN_ZOOM, min(MAX_ZOOM, current + delta * ZOOM_STEP))
+
+
+def safe_filename(name: str) -> str:
+    # Strip either separator, Windows control/reserved characters and devices.
+    name = name.replace('\\', '/').split('/')[-1]
+    name = ''.join('_' if ord(c) < 32 or c in '<>:"/\\|?*' else c for c in name).strip(' .')
+    stem = name.split('.')[0].upper()
+    if stem in {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}:
+        name = '_' + name
+    if len(name) > 180:
+        suffix = Path(name).suffix[:20]
+        name = name[:180-len(suffix)] + suffix
+    return name or 'download'
+
+
+def web_address(value: str) -> str:
+    value = value.strip()
+    if not value or any(c.isspace() or ord(c) < 32 for c in value) or '\\' in value:
+        raise ValueError('آدرس اینترنتی معتبر نیست.')
+    if '://' not in value:
+        if ':' in value.split('/')[0]:
+            raise ValueError('آدرس باید HTTP یا HTTPS باشد.')
+        value = 'https://' + value
+    parsed = urlsplit(value)
+    if parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('فقط آدرس HTTP یا HTTPS بدون اطلاعات ورود مجاز است.')
+    _ = parsed.port
+    return value
+
+
+def origin_label(url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme in ('http', 'https'):
+        return parsed.scheme + '://' + parsed.netloc.rsplit('@', 1)[-1]
+    return 'صفحه داخلی'
+
+
+========================================================================================
+FILE: javan/catalog.py
+GIT BLOB: 1b3a696d1d6814a9aba61e1420ac8ad7ab3bddbc
+UTF-8 BYTES: 3903
+========================================================================================
+"""Validated link model and Persian search, independent of Qt."""
+from dataclasses import dataclass
+import unicodedata
+from urllib.parse import urlsplit
+from pathlib import Path, PureWindowsPath
+
+
+@dataclass(frozen=True, slots=True)
+class Link:
+    id: str
+    title: str
+    url: str
+    category: str
+    description: str = ''
+    kind: str = 'web'
+
+    def __post_init__(self):
+        for field, limit in ((self.id, 128), (self.title, 200), (self.category, 120),
+                             (self.url, 8192), (self.description, 2000), (self.kind, 16)):
+            if not isinstance(field, str) or len(field) > limit or '\x00' in field:
+                raise ValueError('Invalid link field')
+        if not all(value.strip() for value in (self.id, self.title, self.category, self.url)):
+            raise ValueError('Link id, title, category and address are required')
+        if self.kind == 'web':
+            if any(ch.isspace() or ord(ch) < 32 for ch in self.url) or '\\' in self.url:
+                raise ValueError('Invalid URL characters')
+            parsed = urlsplit(self.url)
+            if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError('Expected an HTTP(S) URL without credentials')
+            _ = parsed.port
+        elif self.kind == 'html':
+            path = Path(self.url)
+            win = PureWindowsPath(self.url)
+            if not (path.is_absolute() or win.is_absolute()) or self.url.startswith(('\\\\', '//')):
+                raise ValueError('Expected an absolute local file path (not a network share)')
+            if path.suffix.lower() not in ('.html', '.htm'):
+                raise ValueError('Expected an HTML file')
+        else:
+            raise ValueError('Unknown link kind')
+
+
+SAMPLE_LINKS = (
+    Link('gov', 'پنجره ملی خدمات دولت هوشمند', 'https://my.gov.ir/', 'خدمات دولتی', 'ورود به خدمات دولت'),
+    Link('tax', 'سازمان امور مالیاتی', 'https://tax.gov.ir/', 'خدمات دولتی', 'درگاه سازمان مالیاتی'),
+    Link('cbi', 'بانک مرکزی جمهوری اسلامی ایران', 'https://www.cbi.ir/', 'بانکی و چک', 'اطلاعات و خدمات بانکی'),
+    Link('sanjesh', 'سازمان سنجش آموزش کشور', 'https://www.sanjesh.org/', 'آموزشی و دانشگاهی', 'آزمون و ثبت‌نام کنکور'),
+    Link('post', 'شرکت ملی پست', 'https://www.post.ir/', 'خدمات پستی', 'درگاه خدمات پستی'),
+    Link('tracking', 'رهگیری مرسولات پستی', 'https://tracking.post.ir/', 'خدمات پستی', 'پیگیری بسته و مرسوله'),
+)
+
+_TRANSLATION = str.maketrans({'ي': 'ی', 'ى': 'ی', 'ك': 'ک', 'ۀ': 'ه', 'ة': 'ه', '\u200c': ' ', '\u200d': ' ', '\u0640': '', **{a: str(i) for i, a in enumerate('۰۱۲۳۴۵۶۷۸۹')}, **{a: str(i) for i, a in enumerate('٠١٢٣٤٥٦٧٨٩')}})
+
+
+def normalize(text: str) -> str:
+    text = unicodedata.normalize('NFKC', text).translate(_TRANSLATION).casefold()
+    return ' '.join(''.join(ch for ch in text if unicodedata.category(ch) not in ('Mn', 'Me', 'Cf')).split())
+
+
+def filter_links(links: tuple[Link, ...], query: str) -> tuple[Link, ...]:
+    terms = normalize(query).split()
+    if not terms:
+        return tuple(links)
+    matches = []
+    for link in links:
+        field = normalize(' '.join((link.title, link.category, link.url, link.description)))
+        compact = field.replace(' ', '')
+        if all(term in field or term in compact for term in terms):
+            matches.append(link)
+    return tuple(matches)
+
+
+def group_links(links: tuple[Link, ...]) -> dict[str, list[Link]]:
+    groups: dict[str, list[Link]] = {}
+    for link in links:
+        groups.setdefault(link.category, []).append(link)
+    return groups
+
+
+========================================================================================
+FILE: javan/downloads.py
+GIT BLOB: 8894661ee8c5cb24b3fbc2957e9fd5661325f8c9
+UTF-8 BYTES: 6544
+========================================================================================
+"""Session-scoped download manager. Never opens downloaded files automatically."""
+from pathlib import Path
+from PySide6.QtCore import Qt, QStandardPaths, Signal, QTimer
+from PySide6.QtWebEngineCore import QWebEngineDownloadRequest
+from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QAbstractItemView, QHeaderView)
+from .browser_utils import safe_filename
+from .manager import warn
+
+D = QWebEngineDownloadRequest.DownloadState
+
+
+class DownloadManager(QDialog):
+    changed = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle('مدیریت دانلودها')
+        self.resize(820, 420)
+        self.records = []
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setSingleShot(True)
+        self.refresh_timer.setInterval(120)
+        self.refresh_timer.timeout.connect(self.refresh)
+        layout = QVBoxLayout(self)
+        self.summary = QLabel('دانلودهای این نشست')
+        layout.addWidget(self.summary)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(['نام فایل', 'پیشرفت', 'وضعیت', 'مسیر ذخیره'])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 190)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 145)
+        layout.addWidget(self.table, 1)
+        buttons = QHBoxLayout()
+        for title, action in [('توقف موقت', self.pause), ('ادامه', self.resume), ('لغو', self.cancel), ('پاک کردن پایان‌یافته‌ها', self.clear_finished), ('بستن', self.hide)]:
+            b = QPushButton(title)
+            b.clicked.connect(action)
+            buttons.addWidget(b)
+        layout.addLayout(buttons)
+
+    def receive(self, request):
+        if request.isSavePageDownload() or request.state() != D.DownloadRequested:
+            request.cancel()
+            return
+        folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        suggested = str(Path(folder) / safe_filename(request.suggestedFileName()))
+        name, _ = QFileDialog.getSaveFileName(self.parentWidget(), 'ذخیره فایل دانلودی', suggested, 'همه فایل‌ها (*)')
+        if not name:
+            request.cancel()
+            return
+        path = Path(name)
+        if any(not rec['finished'] and rec['path'] == path for rec in self.records):
+            request.cancel()
+            warn(self.parentWidget(), 'دانلود دیگری در همین مسیر در حال انجام است.')
+            return
+        rec = {'request': request, 'path': path, 'finished': False, 'progress': '۰٪', 'status': 'در انتظار'}
+        self.records.append(rec)
+        request.setDownloadDirectory(str(path.parent))
+        request.setDownloadFileName(path.name)
+        request.receivedBytesChanged.connect(lambda: self.update_record(rec))
+        request.totalBytesChanged.connect(lambda: self.update_record(rec))
+        request.stateChanged.connect(lambda *_: self.update_record(rec))
+        request.isPausedChanged.connect(lambda: self.update_record(rec))
+        request.isFinishedChanged.connect(lambda: self.update_record(rec))
+        request.destroyed.connect(lambda *_: self.request_destroyed(rec))
+        request.accept()
+        self.update_record(rec)
+        self.show()
+        self.raise_()
+
+    def update_record(self, rec):
+        r = rec['request']
+        if r is None:
+            return
+        total, received = r.totalBytes(), r.receivedBytes()
+        rec['progress'] = f'{min(100, int(received * 100 / total))}٪' if total > 0 else f'{received / 1048576:.1f} MB'
+        state = r.state()
+        rec['status'] = {D.DownloadRequested: 'در انتظار', D.DownloadInProgress: 'متوقف موقت' if r.isPaused() else 'در حال دانلود',
+                         D.DownloadCompleted: 'کامل شد', D.DownloadCancelled: 'لغو شد', D.DownloadInterrupted: 'ناموفق: ' + r.interruptReasonString()}.get(state, 'نامشخص')
+        rec['finished'] = r.isFinished()
+        if state == D.DownloadCompleted:
+            rec['progress'] = '۱۰۰٪'
+        if not self.refresh_timer.isActive():
+            self.refresh_timer.start()
+
+    def request_destroyed(self, rec):
+        rec['request'] = None
+        if not rec['finished']:
+            rec['status'] = 'پایان یافت'
+            rec['finished'] = True
+        if rec in self.records and not self.refresh_timer.isActive():
+            self.refresh_timer.start()
+
+    def refresh(self):
+        row = self.table.currentRow()
+        self.table.setRowCount(len(self.records))
+        for i, rec in enumerate(self.records):
+            for j, value in enumerate((rec['path'].name, rec['progress'], rec['status'], str(rec['path']))):
+                self.table.setItem(i, j, QTableWidgetItem(value))
+        if 0 <= row < len(self.records):
+            self.table.selectRow(row)
+        self.summary.setText(f'{len(self.records)} دانلود | {self.active_count()} فعال')
+        self.changed.emit()
+
+    def active_count(self):
+        return sum(not rec['finished'] for rec in self.records)
+
+    def selected(self):
+        row = self.table.currentRow()
+        if 0 <= row < len(self.records):
+            rec = self.records[row]
+            if not rec['finished']:
+                return rec['request']
+        return None
+
+    def pause(self):
+        r = self.selected()
+        if r is not None and r.state() == D.DownloadInProgress:
+            r.pause()
+
+    def resume(self):
+        r = self.selected()
+        if r is not None and r.isPaused():
+            r.resume()
+
+    def cancel(self):
+        r = self.selected()
+        if r is not None:
+            r.cancel()
+
+    def cancel_all(self):
+        for rec in list(self.records):
+            if not rec['finished'] and rec['request'] is not None:
+                rec['request'].cancel()
+
+    def clear_finished(self):
+        self.records = [rec for rec in self.records if not rec['finished']]
+        self.refresh()
+
