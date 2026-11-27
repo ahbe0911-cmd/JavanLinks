@@ -12,7 +12,8 @@ class Sidebar(QFrame):
     def __init__(self, links: tuple[Link, ...], parent=None):
         super().__init__(parent)
         self.setObjectName('sidebar')
-        self.setFixedWidth(310)
+        self.setMinimumWidth(235)
+        self.setMaximumWidth(460)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self._links = tuple(links)
         self._active_id: str | None = None
@@ -20,8 +21,8 @@ class Sidebar(QFrame):
         if len(self._lookup) != len(links):
             raise ValueError('Duplicate link IDs')
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 18, 14, 16)
-        layout.setSpacing(13)
+        layout.setContentsMargins(12, 14, 12, 12)
+        layout.setSpacing(10)
 
         brand = QFrame()
         brand.setObjectName('brand')
@@ -29,7 +30,7 @@ class Sidebar(QFrame):
         brand_layout.setContentsMargins(12, 15, 12, 15)
         name = QLabel('کافینت جوان')
         name.setObjectName('brandTitle')
-        subtitle = QLabel('میز کار خدمات اینترنتی')
+        subtitle = QLabel('میز کار یکپارچه خدمات اینترنتی')
         subtitle.setObjectName('brandSub')
         brand_layout.addWidget(name)
         brand_layout.addWidget(subtitle)
@@ -71,14 +72,27 @@ class Sidebar(QFrame):
         # Double-click may also emit itemActivated on some platforms. Use only
         # itemClicked for mouse and the tree's keyboard activation for Enter.
         self.tree.itemActivated.connect(self._keyboard_activate)
+        self._collapsed = set()
+        self.tree.itemCollapsed.connect(self._remember_collapse)
+        self.tree.itemExpanded.connect(self._remember_expand)
         self._refresh('')
+
+    def _remember_collapse(self, item):
+        if not self.search.text().strip() and item.parent() is None:
+            self._collapsed.add(item.text(0))
+
+    def _remember_expand(self, item):
+        if not self.search.text().strip() and item.parent() is None:
+            self._collapsed.discard(item.text(0))
 
     def _refresh(self, query: str):
         matches = filter_links(self._links, query)
+        self.tree.setUpdatesEnabled(False)
+        previous = self.tree.blockSignals(True)
         self.tree.clear()
         for category, entries in group_links(matches).items():
             group = QTreeWidgetItem([category])
-            group.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            group.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             font = QFont(self.font())
             font.setBold(True)
             group.setFont(0, font)
@@ -91,7 +105,9 @@ class Sidebar(QFrame):
                 group.addChild(item)
                 if link.id == self._active_id:
                     self.tree.setCurrentItem(item)
-            group.setExpanded(True)
+            group.setExpanded(bool(query.strip()) or category not in self._collapsed)
+        self.tree.blockSignals(previous)
+        self.tree.setUpdatesEnabled(True)
         self.tree.setVisible(bool(matches))
         self.empty.setVisible(not matches)
         self.count.setText(f'{len(matches)} لینک از {len(self._links)} لینک')

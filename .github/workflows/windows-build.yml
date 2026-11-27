@@ -9,13 +9,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: javan-windows-build
+  group: javan-windows-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,6 +35,19 @@ jobs:
           path: |
             dist/JavanLinks.exe
             dist/JavanLinks.exe.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Build and verify fast directory package
+        shell: pwsh
+        run: ./build_windows.ps1 -Python python -SkipInstall -Onedir
+      - name: Upload fast directory package
+        uses: actions/upload-artifact@v4
+        with:
+          name: JavanLinks-Fast-Windows-x64
+          path: |
+            dist-fast/JavanLinks-Fast-Windows-x64.zip
+            dist-fast/JavanLinks-Fast-Windows-x64.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

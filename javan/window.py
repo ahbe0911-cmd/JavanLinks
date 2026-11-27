@@ -8,7 +8,7 @@ from PySide6.QtGui import QKeySequence, QShortcut, QPageLayout, QPageSize
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow, QLineEdit,
     QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget, QTabWidget,
-    QDialog, QFileDialog)
+    QDialog, QFileDialog, QMenu, QToolButton, QSplitter)
 from .browser import BrowserView, BrowserSessions
 from .browser_utils import next_zoom, web_address, origin_label
 from .catalog import Link
@@ -48,9 +48,18 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         self.sidebar = Sidebar(self.store.state.links)
-        outer.addWidget(self.sidebar)
+        self.sidebar.setMinimumWidth(235)
+        self.sidebar.setMaximumWidth(460)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(5)
+        self.splitter.addWidget(self.sidebar)
         workspace = QWidget()
-        outer.addWidget(workspace, 1)
+        self.splitter.addWidget(workspace)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([285, 995])
+        outer.addWidget(self.splitter, 1)
         layout = QVBoxLayout(workspace)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
@@ -59,13 +68,13 @@ class MainWindow(QMainWindow):
         top.setObjectName('topbar')
         row = QHBoxLayout(top)
         row.setContentsMargins(8, 7, 8, 7)
-        self.menu_button = self.button(row, 'منو', 'جمع یا باز کردن منو', self.toggle_sidebar)
+        row.setSpacing(6)
+        self.menu_button = self.button(row, '☰ منو', 'جمع یا باز کردن منو', self.toggle_sidebar)
         self.accounting_button = self.button(row, 'حسابداری', 'حسابداری، فاکتور و دفتر نسیه (Ctrl+Shift+A)', self.open_accounting)
         self.accounting_button.setObjectName('accountingButton')
         self.accounting_button.setCheckable(True)
         self.session_button = self.button(row, 'پایان جلسه', 'پاک کردن نشست اینترنتی مشتری؛ حسابداری محفوظ می‌ماند', self.end_customer_session)
         self.session_button.setObjectName('sessionButton')
-        self.font_button = self.button(row, 'فونت‌ها', 'وارد کردن فونت‌های حسابداری از فایل ZIP یا TTF', self.choose_accounting_fonts)
         self.economy_button = self.button(row, 'سبک', 'کاهش فعالیت تب‌های غیرفعال با رعایت پیشنهاد موتور مرورگر', self.toggle_economy)
         self.economy_button.setObjectName('economyButton')
         self.economy_button.setCheckable(True)
@@ -75,7 +84,19 @@ class MainWindow(QMainWindow):
         self.download_button = self.button(row, 'دانلودها', 'مدیریت دانلود', self.show_downloads)
         self.print_button = self.button(row, 'چاپ', 'چاپ صفحه (Ctrl+P)', self.print_page)
         self.pdf_button = self.button(row, 'PDF', 'ذخیره صفحه به صورت PDF', self.save_pdf)
-        self.button(row, '＋ زبانه', 'زبانه جدید (Ctrl+T)', self.new_home)
+        self.button(row, '＋', 'زبانه جدید (Ctrl+T)', self.new_home)
+        self.tools_button = QToolButton()
+        self.tools_button.setObjectName('toolsButton')
+        self.tools_button.setText('ابزارها')
+        self.tools_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        tools_menu = QMenu(self.tools_button)
+        tools_menu.addAction('وارد کردن فونت حسابداری', self.choose_accounting_fonts)
+        tools_menu.addAction('مدیریت لینک‌ها و پشتیبان‌گیری', self.manage_links)
+        tools_menu.addAction('دانلودها', self.show_downloads)
+        tools_menu.addSeparator()
+        tools_menu.addAction('نمایش تمام‌صفحه (F11)', self.toggle_fullscreen)
+        self.tools_button.setMenu(tools_menu)
+        row.addWidget(self.tools_button)
         layout.addWidget(top)
 
         toolbar = QFrame()
@@ -142,7 +163,7 @@ class MainWindow(QMainWindow):
                             ('Ctrl+L', self.focus_address), ('Ctrl+R', self.reload_or_stop), ('F5', self.reload_or_stop),
                             ('Alt+Left', lambda: self.current().back()), ('Alt+Right', lambda: self.current().forward()),
                             ('Ctrl+P', self.print_page), ('Ctrl+J', self.show_downloads),
-                            ('Ctrl+Shift+A', self.open_accounting),
+                            ('Ctrl+Shift+A', self.open_accounting), ('F11', self.toggle_fullscreen),
                             ('Ctrl+=', lambda: self.zoom(1)), ('Ctrl+-', lambda: self.zoom(-1)),
                             ('Ctrl+0', lambda: self.zoom(0)), ('Ctrl+Tab', self.next_tab)]:
             shortcut = QShortcut(QKeySequence(seq), self)
@@ -150,6 +171,12 @@ class MainWindow(QMainWindow):
             self.shortcuts.append(shortcut)
         self.new_home()
         self._apply_sidebar()
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showMaximized()
+        else:
+            self.showFullScreen()
 
     def accounting_view(self):
         for i in range(self.tabs.count()):
@@ -580,7 +607,8 @@ class MainWindow(QMainWindow):
     def _apply_sidebar(self):
         collapsed = self.store.state.sidebar_collapsed
         self.sidebar.setVisible(not collapsed)
-        self.menu_button.setText('نمایش منو' if collapsed else 'جمع کردن منو')
+        self.menu_button.setText('☰ منو')
+        self.menu_button.setToolTip('نمایش منو' if collapsed else 'جمع کردن منو')
 
     def manage_links(self):
         dialog = ManagerDialog(self.store, self)

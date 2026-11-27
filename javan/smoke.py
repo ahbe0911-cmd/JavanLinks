@@ -42,6 +42,14 @@ def run_smoke():
             if window.sidebar.tree.topLevelItemCount() != 1:
                 raise AssertionError('Search failed')
             window.sidebar.search.clear()
+            group = window.sidebar.tree.topLevelItem(0)
+            category = group.text(0)
+            group.setExpanded(False)
+            window.sidebar.search.setText(category)
+            window.sidebar.search.clear()
+            if window.sidebar.tree.topLevelItem(0).isExpanded():
+                raise AssertionError('Sidebar collapse state lost')
+            window.sidebar.tree.topLevelItem(0).setExpanded(True)
             second = window.new_home()
             if second is None or window.tabs.count() != 2:
                 raise AssertionError('Tab failed')

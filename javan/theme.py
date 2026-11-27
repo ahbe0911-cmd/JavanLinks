@@ -96,3 +96,22 @@ QPushButton#economyButton:checked { background: #dcfce7; color: #166534; border:
 QTabBar::tab:selected { border-bottom: 3px solid #0d9488; }
 QPushButton#browserAction:focus, QPushButton#sessionButton:focus, QPushButton#economyButton:focus { border: 1px solid #0d9488; }
 '''
+
+
+STYLE += '''
+QFrame#sidebar { background: #101d30; }
+QFrame#brand { background: #192b43; border-color: #2a405b; border-radius: 13px; }
+QLabel#brandTitle { font-size: 20px; font-weight: 700; }
+QTreeWidget#catalog::item { min-height: 31px; padding: 4px 5px; }
+QTreeWidget#catalog::item:selected { background: #176c70; }
+QSplitter::handle { background: #dbe4ed; }
+QSplitter::handle:hover { background: #0d9488; }
+QToolButton#toolsButton { background: #f1f5f9; color: #203851; border: 1px solid #dce4ed; border-radius: 7px; padding: 7px 15px 7px 8px; }
+QToolButton#toolsButton:hover { background: #dcefeb; }
+QMenu { background: #ffffff; color: #18283b; border: 1px solid #dce4ed; padding: 5px; }
+QMenu::item { padding: 9px 18px; border-radius: 5px; }
+QMenu::item:selected { background: #e0f1ef; color: #164e50; }
+QMenu::separator { background: #e2e8f0; height: 1px; margin: 4px; }
+QTabBar::tab { min-width: 85px; padding: 8px 11px; }
+QLabel#pageTitle { font-size: 14px; }
+'''

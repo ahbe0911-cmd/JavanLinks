@@ -1,4 +1,4 @@
-param([string]$Python = "", [switch]$SkipInstall)
+param([string]$Python = "", [switch]$SkipInstall, [switch]$Onedir)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 function Run-Python {
@@ -22,8 +22,10 @@ Run-Python -m compileall -q main.py javan tests scripts
 Run-Python -m unittest discover -s tests -v
 & node --test tests/test_accounting_js.cjs
 if ($LASTEXITCODE -ne 0) { throw "Accounting JavaScript tests failed" }
-Run-Python -m PyInstaller --noconfirm --clean --onefile --windowed --noupx --name JavanLinks --icon assets/javan.ico --version-file scripts/version_info.txt --add-data "assets;assets" main.py
-$exe = (Resolve-Path "dist\JavanLinks.exe").Path
+$bundleMode = if ($Onedir) { '--onedir' } else { '--onefile' }
+$distPath = if ($Onedir) { 'dist-fast' } else { 'dist' }
+Run-Python -m PyInstaller --noconfirm --clean $bundleMode --windowed --noupx --name JavanLinks --distpath $distPath --icon assets/javan.ico --version-file scripts/version_info.txt --add-data "assets;assets" main.py
+$exe = if ($Onedir) { (Resolve-Path "dist-fast\JavanLinks\JavanLinks.exe").Path } else { (Resolve-Path "dist\JavanLinks.exe").Path }
 $smokeLog = Join-Path ([System.IO.Path]::GetTempPath()) ("JavanLinks-startup-" + [guid]::NewGuid().ToString("N") + ".log")
 $env:JAVAN_CI_SMOKE_LOG = $smokeLog
 try {
@@ -58,6 +60,14 @@ try {
 } finally {
     if (Test-Path $probe) { Remove-Item -Path $probe -Recurse -Force -ErrorAction SilentlyContinue }
 }
-$hash = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -Path "dist\JavanLinks.exe.sha256" -Value "$hash  JavanLinks.exe" -Encoding ascii
+if ($Onedir) {
+    # Preserve Qt's directory layout; do not send only the nested executable.
+    Run-Python -c "import shutil; shutil.make_archive('dist-fast/JavanLinks-Fast-Windows-x64','zip','dist-fast','JavanLinks')"
+    $zip = 'dist-fast\JavanLinks-Fast-Windows-x64.zip'
+    $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -Path "$zip.sha256" -Value "$hash  JavanLinks-Fast-Windows-x64.zip" -Encoding ascii
+} else {
+    $hash = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -Path "dist\JavanLinks.exe.sha256" -Value "$hash  JavanLinks.exe" -Encoding ascii
+}
 Write-Host "Build and frozen startup test succeeded: $exe"
