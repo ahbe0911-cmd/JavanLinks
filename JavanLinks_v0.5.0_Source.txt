@@ -4509,3 +4509,1682 @@ class DownloadManager(QDialog):
         self.records = [rec for rec in self.records if not rec['finished']]
         self.refresh()
 
+
+========================================================================================
+FILE: javan/manager.py
+GIT BLOB: 547d74bd68f55679c190d7213a3be8630d21d959
+UTF-8 BYTES: 10933
+========================================================================================
+"""RTL dialogs for catalog CRUD and backup."""
+from pathlib import Path
+from uuid import uuid4
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogButtonBox,
+    QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from .catalog import Link, group_links
+from .storage import read_state
+
+YES = QMessageBox.StandardButton.Yes
+NO = QMessageBox.StandardButton.No
+
+
+def warn(parent, text):
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle('کافینت جوان')
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(text)
+    box.exec()
+
+
+def ask(parent, text):
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle('تأیید عملیات')
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(text)
+    box.setStandardButtons(YES | NO)
+    box.setDefaultButton(NO)
+    return box.exec() == YES
+
+
+class LinkDialog(QDialog):
+    def __init__(self, categories, link=None, parent=None):
+        super().__init__(parent)
+        self.original = link
+        self.result_link = None
+        self.setWindowTitle('ویرایش لینک' if link else 'افزودن لینک یا فایل HTML')
+        self.resize(580, 320)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.title = QLineEdit(link.title if link else '')
+        self.title.setMaxLength(200)
+        self.category = QComboBox()
+        self.category.setEditable(True)
+        self.category.addItems(list(dict.fromkeys([*categories, 'ابزارهای محلی HTML'])))
+        self.category.setCurrentText(link.category if link else 'خدمات دولتی')
+        self.category.lineEdit().setMaxLength(120)
+        self.kind = QComboBox()
+        self.kind.addItem('آدرس اینترنتی', 'web')
+        self.kind.addItem('فایل HTML محلی', 'html')
+        self.address = QLineEdit(link.url if link else '')
+        self.address.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.address.setMaxLength(8192)
+        self.browse = QPushButton('انتخاب فایل HTML…')
+        self.browse.clicked.connect(self.choose_file)
+        address_row = QWidget()
+        row = QHBoxLayout(address_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.address, 1)
+        row.addWidget(self.browse)
+        self.description = QLineEdit(link.description if link else '')
+        self.description.setMaxLength(2000)
+        form.addRow('نام سامانه', self.title)
+        form.addRow('دسته‌بندی (قابل تایپ)', self.category)
+        form.addRow('نوع لینک', self.kind)
+        form.addRow('آدرس / مسیر', address_row)
+        form.addRow('توضیحات', self.description)
+        layout.addLayout(form)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        layout.addWidget(self.hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText('ذخیره')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('انصراف')
+        buttons.accepted.connect(self.save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.kind.currentIndexChanged.connect(self.kind_changed)
+        if link:
+            self.kind.setCurrentIndex(self.kind.findData(link.kind))
+        self.kind_changed()
+
+    def kind_changed(self, *_):
+        local = self.kind.currentData() == 'html'
+        self.browse.setVisible(local)
+        self.address.setPlaceholderText('C:/Tools/tool.html' if local else 'https://example.com')
+        self.hint.setText('فقط فایل HTML مورد اعتماد؛ دسترسی اینترنت برای ابزار محلی مسدود است. فایل در مسیر اصلی باقی می‌ماند.' if local else 'آدرس را با https:// وارد کنید. دسته‌بندی جدید را می‌توانید تایپ کنید.')
+
+    def choose_file(self):
+        name, _ = QFileDialog.getOpenFileName(self, 'انتخاب فایل HTML', '', 'HTML (*.html *.htm)')
+        if name:
+            path = Path(name).resolve()
+            self.address.setText(str(path))
+            if not self.title.text().strip():
+                self.title.setText(path.stem)
+            if not self.original:
+                self.category.setCurrentText('ابزارهای محلی HTML')
+
+    def save(self):
+        try:
+            kind = self.kind.currentData()
+            address = self.address.text().strip()
+            if kind == 'web' and address and '://' not in address and ':' not in address.split('/')[0]:
+                address = 'https://' + address
+            link = Link(self.original.id if self.original else uuid4().hex,
+                        self.title.text().strip(), address, self.category.currentText().strip(),
+                        self.description.text().strip(), kind)
+            if kind == 'html' and not Path(address).is_file():
+                raise ValueError('فایل HTML در مسیر مشخص‌شده وجود ندارد.')
+        except (ValueError, OSError) as exc:
+            warn(self, 'اطلاعات نامعتبر است.\n' + str(exc))
+            return
+        self.result_link = link
+        self.accept()
+
+
+class ManagerDialog(QDialog):
+    changed = Signal()
+
+    def __init__(self, store, parent=None):
+        super().__init__(parent)
+        self.store = store
+        self.setWindowTitle('مدیریت لینک‌ها و پشتیبان‌گیری')
+        self.resize(860, 510)
+        layout = QVBoxLayout(self)
+        heading = QLabel('مدیریت میز کار | لینک‌های اینترنتی و ابزارهای محلی')
+        heading.setObjectName('managerHeading')
+        layout.addWidget(heading)
+        tools = QHBoxLayout()
+        for title, callback in [('＋ افزودن', self.add), ('ویرایش', self.edit), ('حذف', self.delete),
+                                ('پشتیبان‌گیری', self.export), ('بازیابی', self.restore)]:
+            button = QPushButton(title)
+            button.setObjectName('managerAction')
+            button.clicked.connect(callback)
+            tools.addWidget(button)
+        layout.addLayout(tools)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(['نام', 'دسته', 'نوع', 'آدرس / مسیر'])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 220)
+        self.table.setColumnWidth(1, 155)
+        self.table.setColumnWidth(2, 90)
+        self.table.verticalHeader().hide()
+        self.table.setAlternatingRowColors(True)
+        self.table.cellDoubleClicked.connect(lambda *_: self.edit())
+        layout.addWidget(self.table, 1)
+        self.info = QLabel()
+        self.info.setWordWrap(True)
+        layout.addWidget(self.info)
+        close = QPushButton('بستن')
+        close.clicked.connect(self.accept)
+        layout.addWidget(close)
+        self.refresh()
+
+    def refresh(self):
+        links = self.store.state.links
+        self.table.setRowCount(len(links))
+        for row, link in enumerate(links):
+            for col, value in enumerate((link.title, link.category, 'HTML محلی' if link.kind == 'html' else 'وب', link.url)):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, link.id)
+                self.table.setItem(row, col, item)
+        self.info.setText(f'{len(links)} لینک | تغییرات پس از هر عملیات موفق ذخیره می‌شوند. حذف لینک، فایل اصلی HTML را پاک نمی‌کند.')
+
+    def selected(self):
+        row = self.table.currentRow()
+        item = self.table.item(row, 0) if row >= 0 else None
+        if item is None:
+            warn(self, 'ابتدا یک لینک را انتخاب کنید.')
+            return None
+        return next((x for x in self.store.state.links if x.id == item.data(Qt.ItemDataRole.UserRole)), None)
+
+    def apply(self, operation):
+        try:
+            operation()
+        except (OSError, ValueError) as exc:
+            warn(self, 'عملیات انجام نشد. اطلاعات قبلی حفظ شده است.\n' + str(exc))
+            return
+        self.refresh()
+        self.changed.emit()
+
+    def add(self):
+        dialog = LinkDialog(group_links(self.store.state.links), parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.apply(lambda: self.store.add(dialog.result_link))
+
+    def edit(self):
+        link = self.selected()
+        if link is None:
+            return
+        dialog = LinkDialog(group_links(self.store.state.links), link, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.apply(lambda: self.store.edit(dialog.result_link))
+
+    def delete(self):
+        link = self.selected()
+        if link and ask(self, f'لینک «{link.title}» حذف شود؟ فایل اصلی حذف نمی‌شود.'):
+            self.apply(lambda: self.store.delete(link.id))
+
+    def export(self):
+        name, _ = QFileDialog.getSaveFileName(self, 'ذخیره پشتیبان', 'JavanLinks-backup.json', 'JSON (*.json)')
+        if not name:
+            return
+        try:
+            self.store.export(Path(name))
+            self.info.setText('پشتیبان JSON ذخیره شد. فایل‌های HTML و داده‌های داخل ابزارها در آن نیستند.')
+        except (OSError, ValueError) as exc:
+            warn(self, str(exc))
+
+    def restore(self):
+        name, _ = QFileDialog.getOpenFileName(self, 'انتخاب پشتیبان', '', 'JSON (*.json)')
+        if not name:
+            return
+        try:
+            state = read_state(Path(name))
+        except (OSError, ValueError, RecursionError) as exc:
+            warn(self, 'فایل پشتیبان معتبر نیست.\n' + str(exc))
+            return
+        missing = sum(x.kind == 'html' and not Path(x.url).is_file() for x in state.links)
+        if ask(self, f'{len(state.links)} لینک جایگزین فهرست فعلی شود؟\n{missing} فایل محلی در این سیستم یافت نشد.\nنسخه قبلی به‌صورت خودکار ذخیره می‌شود.'):
+            self.apply(lambda: self.store.restore(state))
+
+
+========================================================================================
+FILE: javan/sidebar.py
+GIT BLOB: 4f588c50ce17c863fd3334cd543f167165170332
+UTF-8 BYTES: 4992
+========================================================================================
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QPushButton
+
+from .catalog import Link, filter_links, group_links
+
+
+class Sidebar(QFrame):
+    link_selected = Signal(object)
+    manage_requested = Signal()
+
+    def __init__(self, links: tuple[Link, ...], parent=None):
+        super().__init__(parent)
+        self.setObjectName('sidebar')
+        self.setFixedWidth(310)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self._links = tuple(links)
+        self._active_id: str | None = None
+        self._lookup = {link.id: link for link in links}
+        if len(self._lookup) != len(links):
+            raise ValueError('Duplicate link IDs')
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 18, 14, 16)
+        layout.setSpacing(13)
+
+        brand = QFrame()
+        brand.setObjectName('brand')
+        brand_layout = QVBoxLayout(brand)
+        brand_layout.setContentsMargins(12, 15, 12, 15)
+        name = QLabel('کافینت جوان')
+        name.setObjectName('brandTitle')
+        subtitle = QLabel('میز کار خدمات اینترنتی')
+        subtitle.setObjectName('brandSub')
+        brand_layout.addWidget(name)
+        brand_layout.addWidget(subtitle)
+        layout.addWidget(brand)
+
+        self.search = QLineEdit()
+        self.search.setObjectName('search')
+        self.search.setPlaceholderText('جستجوی نام سایت یا دسته‌بندی…')
+        self.search.setAccessibleName('جستجوی لینک‌ها')
+        self.search.setClearButtonEnabled(True)
+        layout.addWidget(self.search)
+        heading = QLabel('دسته‌بندی خدمات')
+        heading.setObjectName('sectionTitle')
+        layout.addWidget(heading)
+
+        self.tree = QTreeWidget()
+        self.tree.setObjectName('catalog')
+        self.tree.setAccessibleName('فهرست لینک‌های کاربردی')
+        self.tree.setHeaderHidden(True)
+        self.tree.setColumnCount(1)
+        self.tree.setIndentation(16)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tree.setTextElideMode(Qt.TextElideMode.ElideRight)
+        layout.addWidget(self.tree, 1)
+        self.empty = QLabel('نتیجه‌ای پیدا نشد.')
+        self.empty.setObjectName('empty')
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.empty)
+        self.count = QLabel()
+        self.count.setObjectName('sidebarHint')
+        layout.addWidget(self.count)
+        manage = QPushButton('＋ مدیریت لینک‌ها و پشتیبان‌گیری')
+        manage.setObjectName('manageButton')
+        manage.clicked.connect(self.manage_requested.emit)
+        layout.addWidget(manage)
+        self.search.textChanged.connect(self._refresh)
+        self.tree.itemClicked.connect(self._activate)
+        # Double-click may also emit itemActivated on some platforms. Use only
+        # itemClicked for mouse and the tree's keyboard activation for Enter.
+        self.tree.itemActivated.connect(self._keyboard_activate)
+        self._refresh('')
+
+    def _refresh(self, query: str):
+        matches = filter_links(self._links, query)
+        self.tree.clear()
+        for category, entries in group_links(matches).items():
+            group = QTreeWidgetItem([category])
+            group.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            font = QFont(self.font())
+            font.setBold(True)
+            group.setFont(0, font)
+            group.setForeground(0, QBrush(QColor('#9dc4d9')))
+            self.tree.addTopLevelItem(group)
+            for link in entries:
+                item = QTreeWidgetItem([('HTML · ' if link.kind == 'html' else '') + link.title])
+                item.setData(0, Qt.ItemDataRole.UserRole, link.id)
+                item.setToolTip(0, f'{link.title}\n{link.url}')
+                group.addChild(item)
+                if link.id == self._active_id:
+                    self.tree.setCurrentItem(item)
+            group.setExpanded(True)
+        self.tree.setVisible(bool(matches))
+        self.empty.setVisible(not matches)
+        self.count.setText(f'{len(matches)} لینک از {len(self._links)} لینک')
+
+    def _activate(self, item, _column):
+        link_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if link_id in self._lookup:
+            self._active_id = link_id
+            self.link_selected.emit(self._lookup[link_id])
+
+    def _keyboard_activate(self, item, column):
+        self._activate(item, column)
+
+    def set_links(self, links):
+        self._links = tuple(links)
+        self._lookup = {link.id: link for link in links}
+        self._active_id = None
+        self._refresh(self.search.text())
+
+    def clear_active(self):
+        self._active_id = None
+        self.tree.clearSelection()
+
+
+========================================================================================
+FILE: javan/smoke.py
+GIT BLOB: 74d8ef57958e650f9222a479e23eae238f9ff5c1
+UTF-8 BYTES: 4146
+========================================================================================
+"""Frozen startup test with disposable data."""
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QApplication
+from .theme import configure_font, STYLE
+from .storage import CatalogStore
+from .window import MainWindow
+
+
+def run_smoke():
+    app = QApplication(['JavanLinks smoke test'])
+    app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    configure_font(app)
+    app.setStyleSheet(STYLE)
+    temp = TemporaryDirectory(ignore_cleanup_errors=True)
+    window = MainWindow(CatalogStore(Path(temp.name) / 'catalog.json'))
+    window.show()
+    first = window.browser
+    completed = False
+
+    def result(html):
+        nonlocal completed
+        if completed:
+            return
+        completed = True
+        try:
+            if 'کافینت جوان' not in html:
+                raise AssertionError('Home HTML not rendered')
+            window.sidebar.search.setText('رهگیری')
+            if window.sidebar.tree.topLevelItemCount() != 1:
+                raise AssertionError('Search failed')
+            window.sidebar.search.clear()
+            second = window.new_home()
+            if second is None or window.tabs.count() != 2:
+                raise AssertionError('Tab failed')
+            window.zoom(1)
+            if round(second.zoomFactor() * 100) != 110 or round(first.zoomFactor() * 100) != 100:
+                raise AssertionError('Independent zoom failed')
+            window.close_tab(window.tabs.indexOf(second))
+            if window.tabs.count() != 1:
+                raise AssertionError('Close tab failed')
+            app.exit(0)
+        except Exception:
+            app.exit(2)
+
+    def loaded(ok):
+        if not ok:
+            app.exit(3)
+        else:
+            first.page().toHtml(result)
+
+    first.loadFinished.connect(loaded)
+    QTimer.singleShot(60000, lambda: app.exit(4))
+    return app.exec()
+
+
+
+def run_accounting_probe(mode, folder):
+    """Two independent EXE processes verify stable file:// LocalStorage."""
+    from .accounting import prepare_accounting
+    from .browser import BrowserSessions, BrowserView
+    app = QApplication(['JavanLinks accounting probe'])
+    folder = Path(folder).resolve()
+    page_path = prepare_accounting(folder)
+    sessions = BrowserSessions(folder, lambda request: request.cancel())
+    view = BrowserView(sessions, page_path.parent)
+    view.resize(1100, 720)
+    view.show()
+    done = False
+    key = 'javan_build_persistence_probe'
+    write_script = """
+(() => {
+  try {
+    const services = JSON.parse(localStorage.getItem('javan_acc_services_v2') || '[]');
+    if (!Array.isArray(services) || !services.length) return false;
+    localStorage.setItem('javan_build_persistence_probe', 'javan-ok-v050');
+    return localStorage.getItem('javan_build_persistence_probe') === 'javan-ok-v050';
+  } catch (_) { return false; }
+})()
+"""
+    read_script = """
+(() => {
+  try {
+    const services = JSON.parse(localStorage.getItem('javan_acc_services_v2') || '[]');
+    return localStorage.getItem('javan_build_persistence_probe') === 'javan-ok-v050' &&
+      Array.isArray(services) && services.length > 0 &&
+      !!document.querySelector('#header-history-count');
+  } catch (_) { return false; }
+})()
+"""
+    def finish(ok):
+        nonlocal done
+        if done:
+            return
+        done = True
+        if ok:
+            # Allow the Chromium storage writer to settle before graceful exit.
+            QTimer.singleShot(1500, lambda: app.exit(0))
+        else:
+            app.exit(6)
+
+    def loaded(ok):
+        if not ok:
+            finish(False)
+            return
+        view.page().runJavaScript(write_script if mode == 'write' else read_script, finish)
+
+    view.loadFinished.connect(loaded)
+    QTimer.singleShot(60000, lambda: app.exit(7))
+    view.open_local(str(page_path))
+    code = app.exec()
+    view.close()
+    # Explicitly dispose the page while its profile still exists.
+    view.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    return code
+
+
+========================================================================================
+FILE: javan/storage.py
+GIT BLOB: ea2c35b5b12d485ab4b5a9da9f5641fc9095dc0e
+UTF-8 BYTES: 4086
+========================================================================================
+"""Versioned JSON catalog, atomic writes and safe restore; no Qt dependency."""
+from dataclasses import asdict, dataclass, replace
+import json
+import os
+from pathlib import Path
+import tempfile
+from .catalog import Link, SAMPLE_LINKS
+
+SCHEMA = 1
+MAX_BYTES = 8 * 1024 * 1024
+MAX_LINKS = 5000
+
+
+@dataclass(frozen=True)
+class State:
+    links: tuple[Link, ...] = SAMPLE_LINKS
+    sidebar_collapsed: bool = False
+
+    def __post_init__(self):
+        if len(self.links) > MAX_LINKS or len({x.id for x in self.links}) != len(self.links):
+            raise ValueError('Too many links or duplicate IDs')
+        if type(self.sidebar_collapsed) is not bool:
+            raise ValueError('Invalid sidebar setting')
+
+
+def encode(state: State) -> bytes:
+    raw = (json.dumps({'schema_version': SCHEMA, 'links': [asdict(x) for x in state.links],
+                       'settings': {'sidebar_collapsed': state.sidebar_collapsed}},
+                      ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+    if len(raw) > MAX_BYTES:
+        raise ValueError('Catalog exceeds size limit')
+    return raw
+
+
+def decode(raw: bytes) -> State:
+    if len(raw) > MAX_BYTES:
+        raise ValueError('Backup exceeds size limit')
+    obj = json.loads(raw.decode('utf-8-sig'))
+    if not isinstance(obj, dict) or type(obj.get('schema_version')) is not int or obj['schema_version'] != SCHEMA:
+        raise ValueError('Unsupported backup format')
+    rows = obj.get('links')
+    settings = obj.get('settings', {})
+    if not isinstance(rows, list) or len(rows) > MAX_LINKS or not isinstance(settings, dict):
+        raise ValueError('Invalid catalog structure')
+    allowed = {'id', 'title', 'url', 'category', 'description', 'kind'}
+    for row in rows:
+        if not isinstance(row, dict) or not {'id', 'title', 'url', 'category'} <= row.keys() or not row.keys() <= allowed:
+            raise ValueError('Invalid link record')
+    return State(tuple(Link(**row) for row in rows), settings.get('sidebar_collapsed', False))
+
+
+def read_state(path: Path) -> State:
+    with path.open('rb') as stream:
+        return decode(stream.read(MAX_BYTES + 1))
+
+
+def atomic_write(path: Path, raw: bytes):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.javan-', suffix='.tmp', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+class CatalogStore:
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.state = read_state(self.path) if self.path.exists() else State()
+        if not self.path.exists():
+            atomic_write(self.path, encode(self.state))
+
+    def _commit(self, state: State):
+        atomic_write(self.path, encode(state))
+        self.state = state
+
+    def add(self, link: Link):
+        self._commit(replace(self.state, links=self.state.links + (link,)))
+
+    def edit(self, link: Link):
+        if not any(x.id == link.id for x in self.state.links):
+            raise ValueError('Link not found')
+        self._commit(replace(self.state, links=tuple(link if x.id == link.id else x for x in self.state.links)))
+
+    def delete(self, link_id: str):
+        if not any(x.id == link_id for x in self.state.links):
+            raise ValueError('Link not found')
+        self._commit(replace(self.state, links=tuple(x for x in self.state.links if x.id != link_id)))
+
+    def set_sidebar(self, collapsed: bool):
+        self._commit(replace(self.state, sidebar_collapsed=collapsed))
+
+    def export(self, path: Path):
+        if Path(path).resolve() == self.path.resolve():
+            raise ValueError('Choose a different backup destination')
+        atomic_write(Path(path), encode(self.state))
+
+    def restore(self, state: State):
+        raw = encode(state)
+        atomic_write(self.path.with_suffix('.previous.json'), encode(self.state))
+        atomic_write(self.path, raw)
+        self.state = state
+
+
+========================================================================================
+FILE: javan/theme.py
+GIT BLOB: 856aead8fe434f76ff9562fd02688112941af178
+UTF-8 BYTES: 5473
+========================================================================================
+from pathlib import Path
+from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtWidgets import QApplication
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def configure_font(app: QApplication) -> str:
+    # Optional user-supplied font; never required for launching the application.
+    font_dir = ROOT / 'assets' / 'fonts'
+    families = []
+    for path in sorted(font_dir.glob('*.ttf')):
+        font_id = QFontDatabase.addApplicationFont(str(path))
+        if font_id >= 0:
+            families.extend(QFontDatabase.applicationFontFamilies(font_id))
+    installed = set(QFontDatabase.families()) | set(families)
+    family = next((name for name in ('Vazirmatn', 'Vazir', 'Segoe UI', 'Tahoma', 'Noto Sans Arabic') if name in installed), app.font().family())
+    font = QFont(family, 10)
+    app.setFont(font)
+    return family
+
+
+STYLE = '''
+QMainWindow, QWidget#root { background: #edf1f6; color: #18283b; }
+QFrame#sidebar { background: #14263c; border: none; }
+QFrame#brand { background: #1c344e; border: 1px solid #2c4864; border-radius: 12px; }
+QLabel#brandTitle { color: #ffffff; font-size: 17px; font-weight: 700; }
+QLabel#brandSub { color: #aabdd0; font-size: 11px; }
+QLabel#sectionTitle { color: #aabdd0; font-size: 12px; font-weight: 600; }
+QLabel#sidebarHint { color: #aabdd0; font-size: 11px; }
+QLabel#empty { color: #d9e7f4; padding: 12px; }
+QLineEdit#search { color: #f6f9ff; background: #203851; border: 1px solid #39536b; border-radius: 9px; padding: 10px; selection-background-color: #187c80; }
+QLineEdit#search:focus { border: 1px solid #55d2c4; }
+QTreeWidget#catalog { background: transparent; color: #e5edf7; border: none; outline: none; padding: 2px; }
+QTreeWidget#catalog::item { min-height: 37px; padding: 3px 4px; border-radius: 7px; }
+QTreeWidget#catalog::item:hover { background: #253e58; }
+QTreeWidget#catalog::item:selected { background: #176c70; color: #ffffff; }
+QTreeWidget#catalog::branch { background: transparent; }
+QFrame#topbar { background: #ffffff; border: 1px solid #dce4ed; border-radius: 12px; }
+QLabel#pageTitle { font-size: 15px; font-weight: 700; color: #18283b; }
+QLabel#pageSubtitle { font-size: 11px; color: #52657a; }
+QPushButton#menuButton, QPushButton#homeButton { background: #f1f5f9; color: #203851; border: 1px solid #dce4ed; border-radius: 8px; padding: 9px 13px; }
+QPushButton#menuButton:hover, QPushButton#homeButton:hover { background: #e0f1ef; border-color: #8bbfba; }
+QPushButton#menuButton:focus, QPushButton#homeButton:focus { border: 1px solid #137b77; }
+QFrame#browserCard { background: #ffffff; border: 1px solid #dce4ed; border-radius: 12px; }
+QFrame#statusCard { background: #ffffff; border: 1px solid #dce4ed; border-radius: 8px; }
+QLabel#status { color: #41566b; font-size: 11px; }
+QLabel#address { color: #52657a; font-size: 11px; }
+QProgressBar { border: none; background: #edf1f6; border-radius: 2px; max-height: 4px; }
+QProgressBar::chunk { background: #14968c; border-radius: 2px; }
+QScrollBar:vertical { width: 9px; background: transparent; margin: 0; }
+QScrollBar::handle:vertical { min-height: 30px; background: #567087; border-radius: 4px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QToolTip { color: #18283b; background: #ffffff; border: 1px solid #cbd5e1; padding: 5px; }
+'''
+
+STYLE += '''
+QPushButton#manageButton { background: #176c70; color: white; border: 1px solid #238d87; border-radius: 9px; padding: 11px 6px; font-weight: 600; }
+QPushButton#manageButton:hover { background: #208782; }
+QDialog { background: #f8fafc; color: #18283b; }
+QDialog QLineEdit, QDialog QComboBox { background: white; color: #18283b; border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px; }
+QDialog QPushButton { background: #e6f1f0; color: #164e50; border: 1px solid #b5d5d2; border-radius: 7px; padding: 8px 12px; }
+QDialog QPushButton:hover { background: #cde8e4; }
+QLabel#managerHeading { font-weight: 700; font-size: 16px; color: #14263c; padding: 8px 0; }
+QTableWidget { background: white; alternate-background-color: #f1f5f9; color: #18283b; gridline-color: #e2e8f0; selection-background-color: #176c70; selection-color: white; }
+QHeaderView::section { background: #e2e8f0; color: #18283b; padding: 8px; border: none; font-weight: 600; }
+'''
+
+STYLE += '''
+QPushButton#browserAction { background: #f1f5f9; color: #203851; border: 1px solid #dce4ed; border-radius: 7px; padding: 6px 8px; }
+QPushButton#browserAction:hover { background: #dcefeb; border-color: #85bcb6; }
+QPushButton#browserAction:disabled { color: #a0aaba; background: #f5f7fa; }
+QLineEdit#addressBar { background: white; color: #18283b; border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px; }
+QLineEdit#addressBar:focus { border: 1px solid #176c70; }
+QTabWidget#browserTabs::pane { border: 1px solid #dce4ed; background: white; }
+QTabBar::tab { background: #e0e7ef; color: #40546a; padding: 9px 12px; min-width: 100px; max-width: 220px; margin: 1px; border-radius: 6px; }
+QTabBar::tab:selected { background: white; color: #176c70; font-weight: 700; }
+QTabBar::tab:hover { background: #e3f3ef; }
+'''
+
+STYLE += '''
+QPushButton#accountingButton { background: #059669; color: #fff; border: 1px solid #047857; border-radius: 8px; padding: 8px 16px; font-weight: 700; }
+QPushButton#accountingButton:hover { background: #047857; }
+QPushButton#accountingButton:checked { background: #065f46; border: 1px solid #34d399; }
+QPushButton#accountingButton:focus { border: 2px solid #6ee7b7; }
+'''
+
+
+========================================================================================
+FILE: javan/window.py
+GIT BLOB: 9834e6c8daefe335ce9ecd2783b3705a0cd0e731
+UTF-8 BYTES: 22663
+========================================================================================
+from pathlib import Path
+from time import time_ns
+from zipfile import BadZipFile
+from PySide6.QtCore import Qt, QStandardPaths
+from PySide6.QtGui import QKeySequence, QShortcut, QPageLayout, QPageSize
+from PySide6.QtPrintSupport import QPrinter, QPrintDialog
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow, QLineEdit,
+    QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget, QTabWidget,
+    QDialog, QFileDialog)
+from .browser import BrowserView, BrowserSessions
+from .browser_utils import next_zoom, web_address, origin_label
+from .catalog import Link
+from .sidebar import Sidebar
+from .storage import CatalogStore, atomic_write
+from .manager import ManagerDialog, warn, ask
+from .downloads import DownloadManager
+from .accounting import prepare_accounting, import_fonts
+
+
+def label(text, name):
+    item = QLabel(text)
+    item.setObjectName(name)
+    item.setTextFormat(Qt.TextFormat.PlainText)
+    return item
+
+
+class MainWindow(QMainWindow):
+    MAX_TABS = 24
+
+    def __init__(self, store=None):
+        super().__init__()
+        self.store = store if store is not None else CatalogStore(Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / 'catalog.json')
+        self.setWindowTitle('لینک‌های کاربردی کافینت جوان')
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumSize(920, 550)
+        self.resize(1280, 800)
+        self.print_jobs = {}
+        self.shortcuts = []
+        self.downloads = DownloadManager(self)
+        self.sessions = BrowserSessions(self.store.path.parent, self.downloads.receive)
+        root = QWidget()
+        root.setObjectName('root')
+        self.setCentralWidget(root)
+        outer = QHBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.sidebar = Sidebar(self.store.state.links)
+        outer.addWidget(self.sidebar)
+        workspace = QWidget()
+        outer.addWidget(workspace, 1)
+        layout = QVBoxLayout(workspace)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        top = QFrame()
+        top.setObjectName('topbar')
+        row = QHBoxLayout(top)
+        row.setContentsMargins(8, 7, 8, 7)
+        self.menu_button = self.button(row, 'منو', 'جمع یا باز کردن منو', self.toggle_sidebar)
+        self.accounting_button = self.button(row, 'حسابداری', 'حسابداری، فاکتور و دفتر نسیه (Ctrl+Shift+A)', self.open_accounting)
+        self.accounting_button.setObjectName('accountingButton')
+        self.accounting_button.setCheckable(True)
+        self.font_button = self.button(row, 'فونت‌ها', 'وارد کردن فونت‌های حسابداری از فایل ZIP یا TTF', self.choose_accounting_fonts)
+        self.page_title = label('صفحه اصلی', 'pageTitle')
+        self.page_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        row.addWidget(self.page_title, 1)
+        self.download_button = self.button(row, 'دانلودها', 'مدیریت دانلود', self.show_downloads)
+        self.print_button = self.button(row, 'چاپ', 'چاپ صفحه (Ctrl+P)', self.print_page)
+        self.pdf_button = self.button(row, 'PDF', 'ذخیره صفحه به صورت PDF', self.save_pdf)
+        self.button(row, '＋ زبانه', 'زبانه جدید (Ctrl+T)', self.new_home)
+        layout.addWidget(top)
+
+        toolbar = QFrame()
+        toolbar.setObjectName('topbar')
+        nav = QHBoxLayout(toolbar)
+        nav.setContentsMargins(8, 6, 8, 6)
+        nav.setSpacing(4)
+        toolbar.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        nav.setDirection(QHBoxLayout.Direction.LeftToRight)
+        self.back = self.button(nav, '←', 'بازگشت (Alt+Left)', lambda: self.current().back())
+        self.forward = self.button(nav, '→', 'جلو (Alt+Right)', lambda: self.current().forward())
+        self.reload = self.button(nav, '↻', 'بارگذاری مجدد (Ctrl+R)', self.reload_or_stop)
+        self.home_button = self.button(nav, 'خانه', 'صفحه اصلی', self.show_home)
+        self.address = QLineEdit()
+        self.address.setObjectName('addressBar')
+        self.address.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.address.setPlaceholderText('https://...')
+        self.address.setAccessibleName('آدرس صفحه اینترنتی')
+        self.address.returnPressed.connect(self.navigate_address)
+        nav.addWidget(self.address, 1)
+        self.go = self.button(nav, 'برو', 'باز کردن آدرس', self.navigate_address)
+        self.minus = self.button(nav, '−', 'کوچک‌نمایی (Ctrl+-)', lambda: self.zoom(-1))
+        self.zoom_label = self.button(nav, '100%', 'بازنشانی بزرگ‌نمایی (Ctrl+0)', lambda: self.zoom(0))
+        self.plus = self.button(nav, '+', 'بزرگ‌نمایی (Ctrl++)', lambda: self.zoom(1))
+        layout.addWidget(toolbar)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        self.progress.hide()
+        layout.addWidget(self.progress)
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName('browserTabs')
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.setDocumentMode(True)
+        self.tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs.currentChanged.connect(self.sync)
+        layout.addWidget(self.tabs, 1)
+        status_card = QFrame()
+        status_card.setObjectName('statusCard')
+        bottom = QHBoxLayout(status_card)
+        bottom.setContentsMargins(10, 5, 10, 5)
+        self.status = label('آماده', 'status')
+        self.origin = label('صفحه داخلی', 'address')
+        self.origin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.origin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.origin.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        bottom.addWidget(self.status)
+        bottom.addWidget(self.origin, 1)
+        layout.addWidget(status_card)
+
+        self.sidebar.link_selected.connect(self.open_link)
+        self.sidebar.manage_requested.connect(self.manage_links)
+        self.downloads.changed.connect(self.download_count)
+        for seq, action in [('Ctrl+T', self.new_home), ('Ctrl+W', lambda: self.close_tab(self.tabs.currentIndex())),
+                            ('Ctrl+L', self.focus_address), ('Ctrl+R', self.reload_or_stop), ('F5', self.reload_or_stop),
+                            ('Alt+Left', lambda: self.current().back()), ('Alt+Right', lambda: self.current().forward()),
+                            ('Ctrl+P', self.print_page), ('Ctrl+J', self.show_downloads),
+                            ('Ctrl+Shift+A', self.open_accounting),
+                            ('Ctrl+=', lambda: self.zoom(1)), ('Ctrl+-', lambda: self.zoom(-1)),
+                            ('Ctrl+0', lambda: self.zoom(0)), ('Ctrl+Tab', self.next_tab)]:
+            shortcut = QShortcut(QKeySequence(seq), self)
+            shortcut.activated.connect(action)
+            self.shortcuts.append(shortcut)
+        self.new_home()
+        self._apply_sidebar()
+
+    def accounting_view(self):
+        for i in range(self.tabs.count()):
+            v = self.tabs.widget(i)
+            if getattr(v, 'is_accounting', False):
+                return v
+        return None
+
+    def open_accounting(self):
+        view = self.accounting_view()
+        if view is not None:
+            self.tabs.setCurrentWidget(view)
+            self.accounting_button.setChecked(True)
+            return
+        try:
+            path = prepare_accounting(self.store.path.parent)
+            view = self.make_tab(path.parent, 'حسابداری')
+            if view is None:
+                self.accounting_button.setChecked(False)
+                return
+            view.is_accounting = True
+            view.open_local(str(path))
+            self.sync()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.accounting_button.setChecked(False)
+            warn(self, 'باز کردن حسابداری ناموفق بود.\n' + str(exc))
+
+    def choose_accounting_fonts(self):
+        names, _ = QFileDialog.getOpenFileNames(self, 'انتخاب فایل‌های فونت ارسالی', '', 'فونت و آرشیو (*.zip *.ttf)')
+        if not names:
+            return
+        try:
+            imported = import_fonts(self.store.path.parent, names)
+        except (OSError, ValueError, RuntimeError, BadZipFile) as exc:
+            warn(self, 'وارد کردن فونت ناموفق بود.\n' + str(exc))
+            return
+        view = self.accounting_view()
+        if view is not None:
+            # Refresh the stylesheet only; don't reload an unsaved invoice.
+            stamp = time_ns()
+            view.page().runJavaScript("(()=>{const e=document.querySelector('link[href^=\"fonts/accounting.css\"]');if(e)e.href='fonts/accounting.css?v=" + str(stamp) + "';})()")
+        self.status.setText(f'{len(imported)} فونت محلی وارد شد.')
+
+    @staticmethod
+    def button(layout, text, hint, callback):
+        b = QPushButton(text)
+        b.setObjectName('browserAction')
+        b.setToolTip(hint)
+        b.setAccessibleName(hint)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.clicked.connect(callback)
+        layout.addWidget(b)
+        return b
+
+    @property
+    def browser(self):
+        return self.current()
+
+    def current(self):
+        return self.tabs.currentWidget()
+
+    def make_tab(self, root=None, title='زبانه جدید'):
+        if self.tabs.count() >= self.MAX_TABS:
+            self.status.setText('حداکثر ۲۴ زبانه باز مجاز است.')
+            return None
+        view = BrowserView(self.sessions, root)
+        view.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        view.setAccessibleName('مرورگر داخلی')
+        view.loadStarted.connect(lambda: self.started(view))
+        view.loadProgress.connect(lambda n: self.loading(view, n))
+        view.loadFinished.connect(lambda ok: self.finished(view, ok))
+        view.titleChanged.connect(lambda name: self.title_changed(view, name))
+        view.urlChanged.connect(lambda _: self.sync_if(view))
+        view.status_message.connect(lambda msg: self.message(view, msg))
+        view.popup_requested.connect(self.popup)
+        view.page().windowCloseRequested.connect(lambda: self.close_tab(self.tabs.indexOf(view)))
+        view.printRequested.connect(lambda: self.print_page(view))
+        view.printFinished.connect(lambda ok: self.print_done(view, ok))
+        self.tabs.addTab(view, title)
+        self.tabs.setCurrentWidget(view)
+        return view
+
+    def new_home(self):
+        view = self.make_tab(title='صفحه اصلی')
+        if view is not None:
+            view.show_home()
+            self.sync()
+        return view
+
+    def show_home(self):
+        for i in range(self.tabs.count()):
+            view = self.tabs.widget(i)
+            if view.home:
+                self.tabs.setCurrentWidget(view)
+                return
+        self.new_home()
+
+    def close_tab(self, index):
+        if index < 0 or index >= self.tabs.count():
+            return
+        view = self.tabs.widget(index)
+        if view in self.print_jobs:
+            warn(self, 'تا پایان چاپ یا ساخت PDF، این زبانه را نبندید.')
+            return
+        if getattr(view, 'is_accounting', False) and not ask(self, 'حسابداری بسته شود؟ اطلاعات ثبت‌شده حفظ می‌شود، اما فاکتور ثبت‌نشده ممکن است از دست برود.'):
+            return
+        view.stop()
+        self.tabs.removeTab(index)
+        view.deleteLater()
+        if not self.tabs.count():
+            self.new_home()
+        self.sync()
+
+    def next_tab(self):
+        if self.tabs.count():
+            self.tabs.setCurrentIndex((self.tabs.currentIndex() + 1) % self.tabs.count())
+
+    def open_link(self, link: Link):
+        for i in range(self.tabs.count()):
+            v = self.tabs.widget(i)
+            if v.link_id == link.id:
+                self.tabs.setCurrentWidget(v)
+                return
+        root = None
+        if link.kind == 'html':
+            try:
+                path = Path(link.url).resolve()
+                if not path.is_file():
+                    raise ValueError('فایل HTML در مسیر ذخیره‌شده پیدا نشد.')
+                root = path.parent
+            except (OSError, ValueError, RuntimeError) as exc:
+                warn(self, str(exc))
+                self.sidebar.clear_active()
+                return
+            if not ask(self, 'فقط فایل HTML مورد اعتماد را اجرا کنید. این ابزار به فایل‌های پوشه خودش دسترسی دارد. ادامه می‌دهید؟'):
+                self.sidebar.clear_active()
+                return
+        v = self.make_tab(root, link.title)
+        if v is None:
+            self.sidebar.clear_active()
+            return
+        v.link_id = link.id
+        try:
+            if root is None:
+                v.navigate(link.url)
+            else:
+                v.open_local(link.url)
+        except (OSError, ValueError, RuntimeError) as exc:
+            warn(self, str(exc))
+            self.close_tab(self.tabs.indexOf(v))
+
+    def popup(self, source, request):
+        if getattr(source, 'is_accounting', False):
+            self.message(source, 'حسابداری در یک زبانه اختصاصی اجرا می‌شود.')
+            return
+        if not request.isUserInitiated():
+            self.message(source, 'پنجره خودکار مسدود شد.')
+            return
+        url = request.requestedUrl()
+        if source.root is not None and not source.page().policy.allows(url):
+            self.message(source, 'باز کردن پنجره خارج از پوشه مجاز نیست.')
+            return
+        if source.root is None and url.scheme() not in ('http', 'https', 'about', ''):
+            self.message(source, 'نوع آدرس پنجره مجاز نیست.')
+            return
+        view = self.make_tab(source.root)
+        if view is not None:
+            request.openIn(view.page())
+
+    def navigate_address(self):
+        view = self.current()
+        if view is None or view in self.print_jobs:
+            return
+        try:
+            url = web_address(self.address.text())
+            if view.root is not None:
+                view = self.make_tab()
+                if view is None:
+                    return
+            view.link_id = None
+            view.navigate(url)
+            self.sidebar.clear_active()
+        except ValueError as exc:
+            warn(self, str(exc))
+
+    def focus_address(self):
+        if self.address.isReadOnly():
+            self.new_home()
+        self.address.setFocus()
+        self.address.selectAll()
+
+    def reload_or_stop(self):
+        view = self.current()
+        if view is not None and view not in self.print_jobs:
+            if view.loading:
+                view.stop()
+            elif view.home:
+                view.show_home()
+            else:
+                view.reload()
+
+    def zoom(self, delta):
+        v = self.current()
+        if v is not None:
+            percent = 100 if delta == 0 else next_zoom(round(v.zoomFactor() * 100), delta)
+            v.setZoomFactor(percent / 100)
+            self.sync()
+
+    def started(self, v):
+        v.loading = True
+        v.progress_value = 0
+        self.message(v, 'در حال بارگذاری…')
+
+    def loading(self, v, n):
+        # Update only the progress widget, not every toolbar control, for background load events.
+        v.progress_value = n
+        if self.current() is v and self.progress.value() != n:
+            self.progress.setValue(n)
+
+    def finished(self, v, ok):
+        v.loading = False
+        self.message(v, 'آماده' if ok else 'بارگذاری ناموفق یا متوقف شد')
+
+    def title_changed(self, v, title):
+        index = self.tabs.indexOf(v)
+        if index >= 0:
+            name = 'حسابداری' if getattr(v, 'is_accounting', False) else ('صفحه اصلی' if v.home else (title or 'زبانه جدید'))
+            self.tabs.setTabText(index, name[:50])
+            self.tabs.setTabToolTip(index, name)
+        self.sync_if(v)
+
+    def message(self, v, text):
+        v.last_status = text
+        self.sync_if(v)
+
+    def sync_if(self, v):
+        if self.current() is v:
+            self.sync()
+
+    def sync(self, *_):
+        v = self.current()
+        if v is None:
+            return
+        accounting = getattr(v, 'is_accounting', False)
+        self.accounting_button.setChecked(accounting)
+        url = v.url()
+        if url.scheme() in ('http', 'https'):
+            v.home = False
+        self.page_title.setText('حسابداری و صدور فاکتور' if accounting else ('صفحه اصلی' if v.home else (v.title() or self.tabs.tabText(self.tabs.currentIndex()))))
+        self.status.setText(v.last_status)
+        self.progress.setVisible(v.loading)
+        self.progress.setValue(v.progress_value)
+        busy = v in self.print_jobs
+        self.back.setEnabled(v.history().canGoBack() and not busy)
+        self.forward.setEnabled(v.history().canGoForward() and not busy)
+        self.reload.setText('×' if v.loading else '↻')
+        self.reload.setEnabled(not busy)
+        self.zoom_label.setText(f'{round(v.zoomFactor() * 100)}%')
+        self.print_button.setEnabled(not busy and not v.loading)
+        self.pdf_button.setEnabled(not busy and not v.loading)
+        self.address.setReadOnly(v.root is not None or busy)
+        self.go.setEnabled(v.root is None and not busy)
+        # Always show the true origin separately; do not expose tokens in status.
+        if v.root is not None:
+            self.address.setText(url.toLocalFile())
+            self.origin.setText('HTML محلی')
+        else:
+            if not self.address.hasFocus() or self.address.property('tabIndex') != self.tabs.currentIndex():
+                self.address.setText(url.toString() if url.scheme() in ('http', 'https') else '')
+            self.origin.setText(origin_label(url.toString()))
+        self.address.setProperty('tabIndex', self.tabs.currentIndex())
+
+    def print_page(self, view=None):
+        v = view if isinstance(view, BrowserView) else self.current()
+        if v is None or v in self.print_jobs or v.loading:
+            return
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle('چاپ صفحه')
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.print_jobs[v] = printer
+        self.message(v, 'در حال چاپ…')
+        v.print(printer)
+
+    def print_done(self, v, ok):
+        if v not in self.print_jobs:
+            return
+        self.print_jobs.pop(v, None)
+        self.message(v, 'چاپ انجام شد' if ok else 'چاپ ناموفق بود')
+        if not ok:
+            warn(self, 'چاپ صفحه انجام نشد.')
+
+    def save_pdf(self):
+        v = self.current()
+        if v is None or v in self.print_jobs or v.loading:
+            return
+        name, _ = QFileDialog.getSaveFileName(self, 'ذخیره PDF', 'page.pdf', 'PDF (*.pdf)')
+        if not name:
+            return
+        path = Path(name)
+        if path.suffix.lower() != '.pdf':
+            path = path.with_suffix('.pdf')
+            if path.exists() and not ask(self, 'فایل PDF موجود جایگزین شود؟'):
+                return
+        self.print_jobs[v] = path
+        self.message(v, 'در حال ساخت PDF…')
+
+        def complete(data):
+            try:
+                if not data:
+                    raise ValueError('موتور مرورگر PDF تولید نکرد.')
+                atomic_write(path, bytes(data))
+            except (OSError, ValueError) as exc:
+                self.print_jobs.pop(v, None)
+                self.message(v, 'ساخت PDF ناموفق بود')
+                warn(self, str(exc))
+                return
+            self.print_jobs.pop(v, None)
+            self.message(v, 'PDF ذخیره شد')
+
+        v.page().printToPdf(complete)
+
+    def download_count(self):
+        n = self.downloads.active_count()
+        self.download_button.setText(f'دانلودها ({n})' if n else 'دانلودها')
+
+    def show_downloads(self):
+        self.downloads.show()
+        self.downloads.raise_()
+        self.downloads.activateWindow()
+
+    def _apply_sidebar(self):
+        collapsed = self.store.state.sidebar_collapsed
+        self.sidebar.setVisible(not collapsed)
+        self.menu_button.setText('نمایش منو' if collapsed else 'جمع کردن منو')
+
+    def manage_links(self):
+        dialog = ManagerDialog(self.store, self)
+        dialog.changed.connect(self.catalog_changed)
+        dialog.exec()
+
+    def catalog_changed(self):
+        self.sidebar.set_links(self.store.state.links)
+        # Existing pages remain open, but future launches use edited addresses.
+        for i in range(self.tabs.count()):
+            self.tabs.widget(i).link_id = None
+        self._apply_sidebar()
+
+    def toggle_sidebar(self):
+        try:
+            self.store.set_sidebar(not self.store.state.sidebar_collapsed)
+        except (OSError, ValueError) as exc:
+            warn(self, str(exc))
+            return
+        self._apply_sidebar()
+
+    def closeEvent(self, event):
+        if self.print_jobs:
+            warn(self, 'ابتدا منتظر پایان چاپ یا ساخت PDF بمانید.')
+            event.ignore()
+            return
+        if self.accounting_view() is not None and not ask(self, 'برنامه بسته شود؟ فاکتورهای ثبت‌شده محفوظ هستند؛ ابتدا فاکتور در حال ویرایش را ثبت کنید.'):
+            event.ignore()
+            return
+        if self.downloads.active_count() and not ask(self, 'دانلود فعال وجود دارد. دانلودها لغو و برنامه بسته شود؟'):
+            event.ignore()
+            return
+        self.downloads.cancel_all()
+        self.downloads.hide()
+        super().closeEvent(event)
+
+
+========================================================================================
+FILE: main.py
+GIT BLOB: b0fcbe7dca057794ea37f119198faa661f862fb3
+UTF-8 BYTES: 394
+========================================================================================
+import sys
+from javan.app import run
+from javan.smoke import run_smoke, run_accounting_probe
+
+if __name__ == '__main__':
+    args = sys.argv[1:]
+    if len(args) == 2 and args[0] in ('--accounting-probe-write', '--accounting-probe-read'):
+        raise SystemExit(run_accounting_probe(args[0].rsplit('-', 1)[-1], args[1]))
+    raise SystemExit(run_smoke() if '--smoke-test' in args else run())
+
+
+========================================================================================
+FILE: requirements-build.txt
+GIT BLOB: 7a93613df33085ea90b9adb1495e3d94caa4eb9e
+UTF-8 BYTES: 56
+========================================================================================
+-r requirements.txt
+PyInstaller>=6.18,<7
+Pillow>=11,<13
+
+
+========================================================================================
+FILE: requirements.txt
+GIT BLOB: 77f1595a9903fdb2cd8da76ad833c03ef1dafb06
+UTF-8 BYTES: 16
+========================================================================================
+PySide6>=6.8,<7
+
+
+========================================================================================
+FILE: run.bat
+GIT BLOB: 110edb62001409c8a3ac18a425fd5039109bf985
+UTF-8 BYTES: 594
+========================================================================================
+@echo off
+setlocal
+cd /d "%~dp0"
+if not exist ".venv\Scripts\python.exe" (
+    py -3 -m venv .venv
+    if errorlevel 1 goto fail
+    ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+    if errorlevel 1 goto fail
+)
+".venv\Scripts\python.exe" -c "import PySide6.QtWebEngineWidgets" >nul 2>&1
+if errorlevel 1 (
+    ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+    if errorlevel 1 goto fail
+)
+".venv\Scripts\python.exe" main.py
+if errorlevel 1 goto fail
+exit /b 0
+:fail
+echo Launch failed. Install Python 3.11 or 3.12 x64 and check pip/network access.
+pause
+exit /b 1
+
+
+========================================================================================
+FILE: scripts/prepare_assets.py
+GIT BLOB: 8709621c21ae92b673eade53958ca49a5ba6115c
+UTF-8 BYTES: 2468
+========================================================================================
+"""Generate a multi-resolution Windows icon and obtain licensed Vazirmatn assets."""
+from pathlib import Path
+from urllib.request import urlopen, Request
+from PIL import Image, ImageDraw
+
+ROOT = Path(__file__).resolve().parents[1]
+ASSETS = ROOT / 'assets'
+FONTS = ASSETS / 'fonts'
+SCALE = 4
+
+
+def make_icon():
+    im = Image.new('RGBA', (256*SCALE, 256*SCALE))
+    d = ImageDraw.Draw(im)
+    def rect(box, radius, fill, outline=None, width=1):
+        d.rounded_rectangle(tuple(x*SCALE for x in box), radius*SCALE, fill=fill,
+                            outline=outline, width=width*SCALE)
+    rect((7, 7, 249, 249), 55, '#14263C')
+    rect((20, 20, 236, 236), 43, '#203B52')
+    rect((42, 54, 214, 192), 22, '#F4FAFB')
+    rect((42, 54, 214, 90), 15, '#A5DAD4')
+    for x in (61, 76, 91):
+        d.ellipse((x*SCALE, 67*SCALE, (x+7)*SCALE, 74*SCALE), fill='#176C70')
+    rect((64, 108, 133, 145), 18, None, '#176C70', 10)
+    rect((123, 135, 192, 172), 18, None, '#176C70', 10)
+    d.line((104*SCALE, 136*SCALE, 152*SCALE, 146*SCALE), fill='#176C70', width=10*SCALE)
+    d.ellipse((173*SCALE, 174*SCALE, 217*SCALE, 218*SCALE), fill='#E8B750', outline='#14263C', width=5*SCALE)
+    d.line((184*SCALE, 196*SCALE, 192*SCALE, 204*SCALE, 207*SCALE, 188*SCALE),
+           fill='#14263C', width=5*SCALE, joint='curve')
+    im = im.resize((256, 256), Image.Resampling.LANCZOS)
+    ASSETS.mkdir(exist_ok=True)
+    im.save(ASSETS / 'javan.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+    im.save(ASSETS / 'javan.png')
+
+
+def fetch(name, url):
+    dest = FONTS / name
+    if dest.is_file() and dest.stat().st_size > 0:
+        return
+    with urlopen(Request(url, headers={'User-Agent':'JavanLinks-build'}), timeout=60) as response:
+        data = response.read(10_000_001)
+    if not data or len(data) > 10_000_000:
+        raise RuntimeError('Invalid font asset download')
+    if name.endswith('.ttf') and data[:4] not in (b'\x00\x01\x00\x00', b'OTTO'):
+        raise RuntimeError('Invalid font format')
+    if name == 'OFL.txt' and b'SIL OPEN FONT LICENSE' not in data:
+        raise RuntimeError('Font license not found')
+    dest.write_bytes(data)
+
+
+def main():
+    make_icon()
+    FONTS.mkdir(parents=True, exist_ok=True)
+    base = 'https://raw.githubusercontent.com/google/fonts/main/ofl/vazirmatn/'
+    fetch('Vazirmatn.ttf', base + 'Vazirmatn%5Bwght%5D.ttf')
+    fetch('OFL.txt', base + 'OFL.txt')
+
+
+if __name__ == '__main__':
+    main()
+
+
+========================================================================================
+FILE: scripts/version_info.txt
+GIT BLOB: 38ef343de03223f1d287d842368a49fc681e3351
+UTF-8 BYTES: 667
+========================================================================================
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=(0,5,0,0), prodvers=(0,5,0,0), mask=0x3f,
+    flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0,0)),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('CompanyName', 'Javan Internet Cafe'),
+      StringStruct('FileDescription', 'Javan Links - Internet Cafe Workspace'),
+      StringStruct('FileVersion', '0.5.0'),
+      StringStruct('InternalName', 'JavanLinks'),
+      StringStruct('OriginalFilename', 'JavanLinks.exe'),
+      StringStruct('ProductName', 'Javan Links'),
+      StringStruct('ProductVersion', '0.5.0')
+    ])]),
+    VarFileInfo([VarStruct('Translation', [1033,1200])])
+  ]
+)
+
+
+========================================================================================
+FILE: tests/__init__.py
+GIT BLOB: e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+UTF-8 BYTES: 0
+========================================================================================
+
+
+========================================================================================
+FILE: tests/smoke_gui.py
+GIT BLOB: 3cf037656f10e966691ae35b2c6bb505e8ea25b4
+UTF-8 BYTES: 2401
+========================================================================================
+"""Manual/on-device GUI smoke test. Requires Qt WebEngine and a graphical session."""
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from javan.storage import CatalogStore
+from PySide6.QtCore import QPoint, QTimer, Qt
+from PySide6.QtWidgets import QApplication
+from javan.theme import STYLE, configure_font
+from javan.window import MainWindow
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    configure_font(app)
+    app.setStyleSheet(STYLE)
+    temp = TemporaryDirectory()
+    window = MainWindow(CatalogStore(Path(temp.name) / 'catalog.json'))
+    window.show()
+    result = {'success': False}
+
+    def done(ok):
+        if not ok:
+            print('Home page failed to render')
+            app.exit(1)
+            return
+        try:
+            assert window.sidebar.tree.topLevelItemCount() == 4
+            window.sidebar.search.setText('رهگیری')
+            assert window.sidebar.tree.topLevelItemCount() == 1
+            assert window.sidebar.tree.topLevelItem(0).childCount() == 1
+            window.sidebar.search.setText('notfound123')
+            assert window.sidebar.empty.isVisible()
+            window.sidebar.search.clear()
+            window.toggle_sidebar()
+            assert window.sidebar.isHidden()
+            window.toggle_sidebar()
+            assert not window.sidebar.isHidden()
+            assert window.sidebar.mapTo(window, QPoint(0, 0)).x() > window.browser.mapTo(window, QPoint(0, 0)).x()
+            first = window.browser
+            second = window.new_home()
+            assert window.tabs.count() == 2 and second is window.browser
+            window.zoom(1)
+            assert round(second.zoomFactor() * 100) == 110
+            assert round(first.zoomFactor() * 100) == 100
+            window.close_tab(window.tabs.indexOf(second))
+            assert window.tabs.count() == 1 and window.browser is first
+            result['success'] = True
+            print('GUI smoke passed: home, filter, empty state, collapse and RTL placement')
+            app.exit(0)
+        except AssertionError:
+            print('GUI smoke assertion failed')
+            app.exit(1)
+
+    window.browser.loadFinished.connect(done)
+    QTimer.singleShot(20000, lambda: app.exit(0 if result['success'] else 1))
+    return app.exec()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+
+
+========================================================================================
+FILE: tests/test_accounting.py
+GIT BLOB: d5c9074bad20118c3f23ef595654d4f8615b57f1
+UTF-8 BYTES: 2222
+========================================================================================
+import tempfile
+import unittest
+from pathlib import Path
+from zipfile import ZipFile
+from javan.accounting import prepare_accounting, import_fonts, collect_fonts
+
+
+class AccountingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.assets = self.base / 'assets'
+        (self.assets / 'accounting').mkdir(parents=True)
+        (self.assets / 'accounting' / 'index.html').write_text('<html>accounting</html>', encoding='utf-8')
+        self.folder = self.base / 'data'
+
+    def test_stable_path_and_update(self):
+        p = prepare_accounting(self.folder, self.assets)
+        marker = p.parent / 'persistent-data'
+        marker.write_text('keep')
+        (self.assets / 'accounting' / 'index.html').write_text('<html>new</html>')
+        self.assertEqual(prepare_accounting(self.folder, self.assets), p)
+        self.assertEqual(marker.read_text(), 'keep')
+        self.assertIn('new', p.read_text())
+        self.assertTrue((p.parent / 'fonts' / 'accounting.css').is_file())
+
+    def test_only_known_font_members(self):
+        z = self.base / 'fonts.zip'
+        raw = b'\x00\x01\x00\x00' + b'0' * 32
+        with ZipFile(z, 'w') as archive:
+            archive.writestr('some/path/A Rooznameh.ttf', raw)
+            archive.writestr('some/path/Far_Nazanin.ttf', raw)
+            archive.writestr('../../unrelated.py', 'not a font')
+        names = import_fonts(self.folder, [z], self.assets)
+        self.assertEqual(set(names), {'Nazanin.ttf', 'Rooznameh.ttf'})
+        root = self.folder / 'accounting' / 'fonts'
+        self.assertEqual((root / 'Nazanin.ttf').read_bytes(), raw)
+        css = (root / 'accounting.css').read_text()
+        self.assertIn("url('Nazanin.ttf')", css)
+        self.assertNotIn('unrelated.py', css)
+
+    def test_invalid_font(self):
+        p = self.base / 'A Rooznameh.ttf'
+        p.write_bytes(b'invalid')
+        with self.assertRaises(ValueError):
+            collect_fonts([p])
+
+    def test_missing_bundled_asset(self):
+        with self.assertRaises(FileNotFoundError):
+            prepare_accounting(self.folder, self.base / 'missing')
+
+
+========================================================================================
+FILE: tests/test_browser_utils.py
+GIT BLOB: 767e8dd04707dec4a922528449928f6bfbc4f6ba
+UTF-8 BYTES: 1145
+========================================================================================
+import unittest
+from javan.browser_utils import next_zoom, safe_filename, web_address, origin_label
+
+
+class BrowserUtilsTests(unittest.TestCase):
+    def test_zoom(self):
+        self.assertEqual(next_zoom(100, 1), 110)
+        self.assertEqual(next_zoom(195, 1), 200)
+        self.assertEqual(next_zoom(50, -1), 50)
+
+    def test_filename(self):
+        self.assertEqual(safe_filename(r'..\..\form.pdf'), 'form.pdf')
+        self.assertEqual(safe_filename('CON.txt'), '_CON.txt')
+        self.assertEqual(safe_filename(''), 'download')
+        self.assertEqual(safe_filename('a:b?.pdf'), 'a_b_.pdf')
+
+    def test_address(self):
+        self.assertEqual(web_address('example.com'), 'https://example.com')
+        self.assertEqual(web_address('http://example.com:8080/a'), 'http://example.com:8080/a')
+        for url in ('javascript:alert(1)', 'file:///a.html', 'https://u:p@example.com', 'https://', 'a b'):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                web_address(url)
+
+    def test_origin(self):
+        self.assertEqual(origin_label('https://example.com/path?token=secret'), 'https://example.com')
+
+
+========================================================================================
+FILE: tests/test_catalog.py
+GIT BLOB: fb53d96ae3fc87a2039a6c684c96fb204f7b9550
+UTF-8 BYTES: 2110
+========================================================================================
+import unittest
+from javan.catalog import Link, SAMPLE_LINKS, filter_links, group_links, normalize
+
+
+class CatalogTests(unittest.TestCase):
+    def test_empty_returns_everything(self):
+        self.assertEqual(filter_links(SAMPLE_LINKS, '  '), SAMPLE_LINKS)
+
+    def test_arabic_persian_equivalence(self):
+        self.assertEqual(normalize('بانكي'), normalize('بانکی'))
+        self.assertEqual([x.id for x in filter_links(SAMPLE_LINKS, 'بانكي')], ['cbi'])
+
+    def test_category(self):
+        self.assertEqual([x.id for x in filter_links(SAMPLE_LINKS, 'خدمات پستی')], ['post', 'tracking'])
+
+    def test_domain(self):
+        self.assertEqual([x.id for x in filter_links(SAMPLE_LINKS, 'TRACKING.POST.IR')], ['tracking'])
+
+    def test_multiple_terms(self):
+        self.assertEqual([x.id for x in filter_links(SAMPLE_LINKS, 'رهگیری پستی')], ['tracking'])
+
+    def test_zwnj_and_numbers(self):
+        self.assertEqual(normalize('ثبت‌نام ۱۴۰۵'), 'ثبت نام 1405')
+        self.assertEqual([x.id for x in filter_links(SAMPLE_LINKS, 'ثبتنام')], ['sanjesh'])
+
+    def test_no_match(self):
+        self.assertEqual(filter_links(SAMPLE_LINKS, 'notfound123'), ())
+
+    def test_group_order_and_count(self):
+        groups = group_links(SAMPLE_LINKS)
+        self.assertEqual(list(groups), ['خدمات دولتی', 'بانکی و چک', 'آموزشی و دانشگاهی', 'خدمات پستی'])
+        self.assertEqual(sum(map(len, groups.values())), len(SAMPLE_LINKS))
+
+    def test_unique_ids(self):
+        self.assertEqual(len(set(x.id for x in SAMPLE_LINKS)), len(SAMPLE_LINKS))
+
+    def test_invalid_url(self):
+        for url in ('javascript:alert(1)', 'https://', 'file:///test.html', 'https://user:pass@example.com'):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                Link('id', 'عنوان', url, 'دسته')
+
+    def test_missing_fields(self):
+        with self.assertRaises(ValueError):
+            Link('', 'عنوان', 'https://example.com', 'دسته')
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+========================================================================================
+FILE: tests/test_storage.py
+GIT BLOB: 2bc40e14d6ca62f457807efc2b9fff9eeb46e86f
+UTF-8 BYTES: 3708
+========================================================================================
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from dataclasses import replace
+from javan.catalog import Link, SAMPLE_LINKS
+from javan.storage import CatalogStore, State, encode, decode, read_state
+
+
+class StorageTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'catalog.json'
+        self.store = CatalogStore(self.path)
+        self.link = Link('new', 'سامانه تازه', 'https://example.com/', 'دسته جدید')
+
+    def test_initial(self):
+        self.assertEqual(read_state(self.path).links, SAMPLE_LINKS)
+
+    def test_crud_and_reopen(self):
+        self.store.add(self.link)
+        updated = replace(self.link, title='ویرایش شد')
+        self.store.edit(updated)
+        self.assertEqual(CatalogStore(self.path).state.links[-1], updated)
+        self.store.delete(updated.id)
+        self.assertEqual(CatalogStore(self.path).state.links, SAMPLE_LINKS)
+
+    def test_empty_is_preserved(self):
+        self.store.restore(State(()))
+        self.assertEqual(CatalogStore(self.path).state.links, ())
+
+    def test_settings(self):
+        self.store.set_sidebar(True)
+        self.assertTrue(CatalogStore(self.path).state.sidebar_collapsed)
+
+    def test_duplicate_does_not_modify_disk(self):
+        before = self.path.read_bytes()
+        with self.assertRaises(ValueError):
+            self.store.add(SAMPLE_LINKS[0])
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_failed_write_does_not_modify_state(self):
+        before = self.store.state
+        with patch('javan.storage.os.replace', side_effect=OSError('disk')):
+            with self.assertRaises(OSError):
+                self.store.add(self.link)
+        self.assertEqual(self.store.state, before)
+        self.assertEqual(read_state(self.path), before)
+        self.assertFalse(list(self.path.parent.glob('.javan-*')))
+
+    def test_backup_and_restore(self):
+        backup = self.path.parent / 'backup.json'
+        self.store.export(backup)
+        self.store.add(self.link)
+        previous = self.store.state
+        self.store.restore(read_state(backup))
+        self.assertEqual(self.store.state.links, SAMPLE_LINKS)
+        self.assertEqual(read_state(self.path.with_suffix('.previous.json')), previous)
+
+    def test_invalid_backup(self):
+        for raw in (b'not json', b'{}', b'{"schema_version":2,"links":[]}',
+                    b'{"schema_version":1,"links":[{}]}',
+                    b'{"schema_version":1,"links":[],"settings":{"sidebar_collapsed":1}}'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                decode(raw)
+
+    def test_corrupt_startup_is_not_overwritten(self):
+        self.path.write_bytes(b'bad')
+        with self.assertRaises(ValueError):
+            CatalogStore(self.path)
+        self.assertEqual(self.path.read_bytes(), b'bad')
+
+    def test_local_roundtrip_and_missing_file(self):
+        link = Link('html', 'ابزار', r'C:\Tools\فاکتور.html', 'محلی', kind='html')
+        self.assertEqual(decode(encode(State((link,)))).links[0], link)
+
+    def test_reject_relative_or_network_or_non_html(self):
+        for address in ('tool.html', r'\\server\share\tool.html', r'C:\Tools\test.exe'):
+            with self.subTest(address=address), self.assertRaises(ValueError):
+                Link('bad', 'نام', address, 'محلی', kind='html')
+
+    def test_export_cannot_overwrite_live_file(self):
+        with self.assertRaises(ValueError):
+            self.store.export(self.path)
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+END OF SNAPSHOT — 32 files.
