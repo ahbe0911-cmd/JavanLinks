@@ -28,6 +28,20 @@ if (-not $process.WaitForExit(180000)) {
     throw "Frozen WebEngine startup test timed out."
 }
 if ($process.ExitCode -ne 0) { throw "Frozen WebEngine startup test failed: $($process.ExitCode)" }
+# Verify actual accounting storage survives two independent frozen processes.
+$probe = Join-Path ([System.IO.Path]::GetTempPath()) ("JavanLinks-probe-" + [guid]::NewGuid().ToString("N"))
+try {
+    foreach ($mode in @("write", "read")) {
+        $probeProcess = Start-Process -FilePath $exe -ArgumentList @("--accounting-probe-$mode", ('"' + $probe + '"')) -PassThru
+        if (-not $probeProcess.WaitForExit(180000)) {
+            & taskkill /PID $probeProcess.Id /T /F
+            throw "Accounting persistence probe $mode timed out."
+        }
+        if ($probeProcess.ExitCode -ne 0) { throw "Accounting persistence probe $mode failed: $($probeProcess.ExitCode)" }
+    }
+} finally {
+    if (Test-Path $probe) { Remove-Item -Path $probe -Recurse -Force -ErrorAction SilentlyContinue }
+}
 $hash = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -Path "dist\JavanLinks.exe.sha256" -Value "$hash  JavanLinks.exe" -Encoding ascii
 Write-Host "Build and frozen startup test succeeded: $exe"

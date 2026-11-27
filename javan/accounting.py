@@ -37,8 +37,8 @@ def make_font_css(folder):
     face('Rooznameh.ttf', 'JavanHeadline', '400')
     face('Nazanin.ttf', 'JavanNazanin', '400')
     rules.append("""
-:root { --font-main: 'JavanVazirLocal', 'JavanVazir', 'Vazirmatn', Tahoma, sans-serif; }
-.brand-text h1, .print-shop-name { font-family: 'JavanHeadline', var(--font-main); font-weight: 700; }
+html:root { --font-main: 'JavanVazirLocal', 'JavanVazir', 'Vazirmatn', Tahoma, sans-serif; }
+.app-shell .brand-text h1, .print-doc .print-shop-name { font-family: 'JavanHeadline', var(--font-main); font-weight: 700; }
 @media print {
   .print-doc:not(.print-80mm) .print-shop-info,
   .print-doc:not(.print-80mm) .print-words-box,

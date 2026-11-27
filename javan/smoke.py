@@ -53,3 +53,66 @@ def run_smoke():
     first.loadFinished.connect(loaded)
     QTimer.singleShot(60000, lambda: app.exit(4))
     return app.exec()
+
+
+
+def run_accounting_probe(mode, folder):
+    """Two independent EXE processes verify stable file:// LocalStorage."""
+    from .accounting import prepare_accounting
+    from .browser import BrowserSessions, BrowserView
+    app = QApplication(['JavanLinks accounting probe'])
+    folder = Path(folder).resolve()
+    page_path = prepare_accounting(folder)
+    sessions = BrowserSessions(folder, lambda request: request.cancel())
+    view = BrowserView(sessions, page_path.parent)
+    view.resize(1100, 720)
+    view.show()
+    done = False
+    key = 'javan_build_persistence_probe'
+    write_script = """
+(() => {
+  try {
+    const services = JSON.parse(localStorage.getItem('javan_acc_services_v2') || '[]');
+    if (!Array.isArray(services) || !services.length) return false;
+    localStorage.setItem('javan_build_persistence_probe', 'javan-ok-v050');
+    return localStorage.getItem('javan_build_persistence_probe') === 'javan-ok-v050';
+  } catch (_) { return false; }
+})()
+"""
+    read_script = """
+(() => {
+  try {
+    const services = JSON.parse(localStorage.getItem('javan_acc_services_v2') || '[]');
+    return localStorage.getItem('javan_build_persistence_probe') === 'javan-ok-v050' &&
+      Array.isArray(services) && services.length > 0 &&
+      !!document.querySelector('#header-history-count');
+  } catch (_) { return false; }
+})()
+"""
+    def finish(ok):
+        nonlocal done
+        if done:
+            return
+        done = True
+        if ok:
+            # Allow the Chromium storage writer to settle before graceful exit.
+            QTimer.singleShot(1500, lambda: app.exit(0))
+        else:
+            app.exit(6)
+
+    def loaded(ok):
+        if not ok:
+            finish(False)
+            return
+        view.page().runJavaScript(write_script if mode == 'write' else read_script, finish)
+
+    view.loadFinished.connect(loaded)
+    QTimer.singleShot(60000, lambda: app.exit(7))
+    view.open_local(str(page_path))
+    code = app.exec()
+    view.close()
+    # Explicitly dispose the page while its profile still exists.
+    view.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    return code
